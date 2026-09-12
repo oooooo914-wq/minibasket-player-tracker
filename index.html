@@ -13,7 +13,7 @@
 <body>
   <main class="app">
     <header>
-      <p class="eyebrow">MINIBASKET / TRACKING MVP 0.2</p>
+      <p class="eyebrow">MINIBASKET / TRACKING MVP 0.3</p>
       <h1>あの子の動きを、追いかける。</h1>
       <p>動画を選ぶ → 停止する → 青い枠の選手をタップ → 再生</p>
       <p class="privacy">動画は端末内で解析。アップロードはありません。</p>
@@ -22,6 +22,7 @@
       <label class="file-button">動画を選ぶ<input id="videoInput" type="file" accept="video/*" /></label>
       <button id="loadAiBtn" type="button">AIを準備</button>
       <button id="resetBtn" type="button">選び直す</button>
+      <button id="updateBtn" type="button" hidden>更新して再読込（動画は選び直し）</button>
       <button id="installBtn" type="button" hidden>ホーム画面に追加</button>
     </section>
     <p id="fileInfo" class="muted">まずは選手が大きく映る、短い区間で試してください。</p>
@@ -54,11 +55,13 @@
       <div><strong>検出</strong><span id="detectInfo">0人</span></div>
       <div><strong>実測の検出頻度</strong><span id="fpsInfo">—</span></div>
       <div><strong>カメラ移動</strong><span id="cameraInfo">補正未確定</span></div>
+      <div><strong>追跡の確認方法</strong><span id="trackingInfo">未選択</span></div>
+      <div><strong>直前の停止理由</strong><span id="stopInfo">—</span></div>
       <div><strong>PWA</strong><span id="pwaInfo">準備中</span></div>
     </section>
     <aside>
-      <p><span class="dot green"></span>緑：追跡対象　<span class="dot blue"></span>青：検出した人物　<span class="dot yellow"></span>黄：直近8秒の画面上の軌跡</p>
-      <p><strong>走行距離はまだ計測しません。</strong>黄色の線にはカメラの動きも含まれます。見失いや重なりを検知すると停止しますが、同じ服の選手を取り違える可能性は残ります。緑の枠を見ながら確認してください。</p>
+      <p><span class="dot green"></span>緑：検出確認済み／黄枠：一時補間　<span class="dot blue"></span>青：検出した人物　<span class="dot yellow"></span>黄：直近8秒の画面上の軌跡</p>
+      <p><strong>走行距離はまだ計測しません。</strong>黄色の線にはカメラの動きも含まれます。短い検出抜けは黄枠でつなぎ、対象を確認できない場合は停止しますが、同じ服の選手を取り違える可能性は残ります。緑の枠を見ながら確認してください。</p>
       <details><summary>スマホで使うときのヒント</summary>
         <p>Chromeのメニュー →「ホーム画面に追加」から起動できます。初回のAI準備には通信が必要です。動画や検出画像は送信しません。</p>
         <p>重いときは0.25倍、人物検出5 fpsで試してください。別アプリへの移動や時間の移動後は、選手を選び直します。動画・追跡結果は再読込すると消えます。</p>
@@ -66,7 +69,7 @@
       </details>
     </aside>
     <noscript>このアプリにはJavaScriptが必要です。ChromeでJavaScriptを有効にしてください。</noscript>
-    <footer>MiniBasket Player Tracker · MVP 0.2</footer>
+    <footer>MiniBasket Player Tracker · MVP 0.3</footer>
   </main>
   <script type="module" src="./app.js"></script>
 </body>

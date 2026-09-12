@@ -7,6 +7,7 @@ let worker=null,ready=false,initializing=null,epoch=0,busy=false,frameTimer=null
 let detections=[],target=null,trail=[],state='idle',objectUrl=null,lastVideoTime=-1,lastSent=0;
 let analysisWidth=768,analysisHeight=432,rafId=null,selectionTime=-1,selectable=false;
 let processingMs=0,lastFrameWall=0,detectionCount=0,rateStart=0,pendingForce=false,installPrompt=null;
+let bridging=false,waitingWorker=null,reloadForUpdate=false;
 const capture=document.createElement('canvas');
 const captureCtx=capture.getContext('2d');
 function setStatus(text) {statusEl.textContent=text;statusEl.classList.toggle('warning',state==='lost');}
@@ -33,8 +34,8 @@ function draw() {
     ctx.fillStyle='#172554';ctx.fillRect(b.x,b.y,24,22);ctx.fillStyle='#fff';ctx.font='bold 13px system-ui';ctx.fillText(String(i+1),b.x+6,b.y+16);
   });
   if(target&&state==='tracking') {
-    const b=videoToScreen(target);ctx.strokeStyle='#4ade80';ctx.lineWidth=3;ctx.strokeRect(b.x,b.y,b.width,b.height);
-    ctx.fillStyle='#4ade80';ctx.beginPath();ctx.arc(b.x+b.width/2,b.y+b.height,5,0,Math.PI*2);ctx.fill();
+    const b=videoToScreen(target);ctx.strokeStyle=bridging?'#fbbf24':'#4ade80';ctx.lineWidth=3;ctx.strokeRect(b.x,b.y,b.width,b.height);
+    ctx.fillStyle=bridging?'#fbbf24':'#4ade80';ctx.beginPath();ctx.arc(b.x+b.width/2,b.y+b.height,5,0,Math.PI*2);ctx.fill();
   }
 }
 function updateTime() {
@@ -45,12 +46,13 @@ function updateTime() {
 function updatePlayback() {$('playBtn').textContent=video.paused?'▶ 再生':'❚❚ 一時停止';updateTime();draw();}
 function clearTracking(message='停止して、青い枠の選手をタップしてください。') {
   epoch++;worker?.postMessage({type:'reset'});state='idle';target=null;trail=[];detections=[];
+  bridging=false;$('trackingInfo').textContent='未選択';
   selectable=false;lastVideoTime=-1;targetInfo.textContent='未選択';detectInfo.textContent='0人';
   $('playerChoices').replaceChildren();setStatus(message);draw();
 }
 function lose(message) {
   if(state==='lost') return;
-  state='lost';target=null;trail=[];targetInfo.textContent='再指定が必要';video.pause();
+  state='lost';target=null;trail=[];targetInfo.textContent='再指定が必要';$('stopInfo').textContent=message;video.pause();
   setStatus(message);draw();
 }
 function failAi(message) {
@@ -79,7 +81,7 @@ async function initDetector() {
       if(m.type==='error') {failAi(m.message);resolve();return;}
       if(m.type==='selected') {
         if(m.epoch!==epoch)return;
-        target=m.box;state='tracking';trail=[];targetInfo.textContent='選択済み';
+        target=m.box;state='tracking';bridging=false;trail=[];targetInfo.textContent='選択済み';$('trackingInfo').textContent='人物検出で確認';
         setStatus('緑の枠を確認し、再生してください。違う場合は停止して選び直せます。');draw();return;
       }
       if(m.type!=='result')return;
@@ -95,8 +97,10 @@ async function initDetector() {
       detectInfo.textContent=`${detections.length}人`;target=m.box;
       if(m.state==='lost')lose(m.reason);
       else if(state!=='lost')state=m.state;
+      bridging=!!m.bridge;
+      if(state!=='lost')$('trackingInfo').textContent=m.note||'人物検出で確認';
       if(state==='tracking') {
-        targetInfo.textContent='追跡中';const b=m.box;
+        targetInfo.textContent=bridging?'一時補間中':'追跡中';const b=m.box;
         if(b)trail.push({x:b.originX+b.width/2,y:b.originY+b.height,time:m.time});
         if(trail.length>600)trail.splice(0,trail.length-600);
       }
@@ -200,9 +204,11 @@ $('installBtn').addEventListener('click',async()=>{if(installPrompt){await insta
 if('serviceWorker' in navigator) {
   navigator.serviceWorker.register(new URL('./sw.js',import.meta.url),{scope:'./',updateViaCache:'none'}).then(reg=>{
     $('pwaInfo').textContent=reg.active?'ホーム画面追加対応':'オフライン用画面を準備中';
-    const update=()=>{$('pwaInfo').textContent='更新あり：動画の確認後に再読込';};
+    const update=()=>{waitingWorker=reg.waiting;$('updateBtn').hidden=false;$('pwaInfo').textContent='更新あり：更新ボタンで反映';};
     if(reg.waiting)update();
     reg.addEventListener('updatefound',()=>reg.installing?.addEventListener('statechange',()=>{if(reg.waiting)update();}));
-    navigator.serviceWorker.addEventListener('controllerchange',()=>{$('pwaInfo').textContent='ホーム画面追加対応';});
+    navigator.serviceWorker.addEventListener('controllerchange',()=>{if(reloadForUpdate){window.location.reload();return;}$('pwaInfo').textContent='ホーム画面追加対応';});
   }).catch(()=>{$('pwaInfo').textContent='ホーム画面追加の準備に失敗。オンラインでは利用できます。';});
 }
+
+$('updateBtn').addEventListener('click',()=>{if(waitingWorker){video.pause();reloadForUpdate=true;waitingWorker.postMessage({type:'activateUpdate'});}});

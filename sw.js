@@ -1,5 +1,5 @@
 const PREFIX='minibasket-tracker-';
-const CACHE=PREFIX+'v2.0.1';
+const CACHE=PREFIX+'v3.0.0';
 const CORE=['./','./index.html','./styles.css','./app.js','./tracker.js','./ai-config.js',
   './detector-worker.js','./manifest.webmanifest','./icons/icon-192.png','./icons/icon-512.png'];
 const root=new URL('./',self.location.href);
@@ -25,3 +25,6 @@ self.addEventListener('fetch',event=>{
     return cached||fetch(event.request);
   })());
 });
+
+// Activated only through the user's explicit update button.
+self.addEventListener('message',event=>{if(event.data?.type==='activateUpdate')self.skipWaiting();});

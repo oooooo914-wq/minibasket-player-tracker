@@ -42,30 +42,53 @@ export class KalmanAxis {
     this.a*=1-k; this.b*=1-k; this.c-=kv*b;
   }
 }
+// A bounded crop makes a small selected player larger at the detector input.
+export function targetRegion(box,width,height,gap=0) {
+  const side=Math.min(Math.max(width,height),Math.max(128,box.height*(2.8+Math.min(1,gap)*2)));
+  const rw=Math.min(width,Math.max(side,box.width*3)),rh=Math.min(height,side),c=centerOf(box);
+  return {originX:Math.max(0,Math.min(width-rw,c.x-rw/2)),originY:Math.max(0,Math.min(height-rh,c.y-rh/2)),width:rw,height:rh};
+}
 export class PlayerTracker {
   constructor() { this.reset(); }
-  reset() { this.state='idle'; this.box=null; this.anchor=null; this.recent=null; this.reason=''; this.time=null; this.lastDetection=null; }
-  select(d,time) {
-    this.box={...d.boundingBox}; this.anchor=[...d.appearance]; this.recent=[...d.appearance];
-    const c=centerOf(this.box); this.kx=new KalmanAxis(c.x); this.ky=new KalmanAxis(c.y);
-    this.state='tracking'; this.reason=''; this.time=time; this.lastDetection=time;
+  reset() {
+    this.state='idle';this.box=null;this.anchor=null;this.recent=null;this.reason='';
+    this.time=null;this.lastDetection=null;this.lastEvidence=null;this.bridge=false;this.note='未選択';this.localReliable=false;
   }
-  lose(reason) { if(this.state==='tracking') {this.state='lost'; this.reason=reason;} return null; }
+  select(d,time) {
+    this.box={...d.boundingBox};this.anchor=[...d.appearance];this.recent=[...d.appearance];
+    const c=centerOf(this.box);this.kx=new KalmanAxis(c.x);this.ky=new KalmanAxis(c.y);
+    this.state='tracking';this.reason='';this.time=time;this.lastDetection=time;this.lastEvidence=time;
+    this.bridge=false;this.note='人物検出で確認';this.localReliable=false;
+  }
+  lose(reason) {if(this.state==='tracking'){this.state='lost';this.reason=reason;this.note=reason;}return null;}
   advance(time,motion) {
-    if(this.state!=='tracking') return;
+    if(this.state!=='tracking')return;
     const dt=time-this.time;
-    if(dt<0 || dt>.55) return this.lose('時間が飛びました。選手を再指定してください。');
-    const old=centerOf(this.box), camera=motion?.camera;
-    this.kx.predict(dt,camera?.reliable?camera.dx:0); this.ky.predict(dt,camera?.reliable?camera.dy:0);
-    if(motion?.local?.reliable) {
-      this.kx.correct(old.x+motion.local.dx); this.ky.correct(old.y+motion.local.dy);
-    }
-    this.box.originX=this.kx.x-this.box.width/2; this.box.originY=this.ky.x-this.box.height/2;
+    if(dt<0||dt>.55)return this.lose('時間が飛びました。選手を再指定してください。');
+    const old=centerOf(this.box),camera=motion?.camera;
+    this.kx.predict(dt,camera?.reliable?camera.dx:0);this.ky.predict(dt,camera?.reliable?camera.dy:0);
+    this.localReliable=!!motion?.local?.reliable;
+    if(this.localReliable){this.kx.correct(old.x+motion.local.dx);this.ky.correct(old.y+motion.local.dy);}
+    this.box.originX=this.kx.x-this.box.width/2;this.box.originY=this.ky.x-this.box.height/2;
     this.time=time;
-    if(time-this.lastDetection>.55) this.lose('人物検出が追いつきません。低速再生で再指定してください。');
+    // Expiry is checked after this frame's detection, so a valid fresh detection
+    // is not discarded before it has a chance to confirm the player.
+  }
+  observeAppearance(feature,time) {
+    if(this.state==='tracking'&&this.localReliable&&appearanceDistance(this.anchor,feature)<.5)this.lastEvidence=time;
+  }
+  hold(time,reason='人物検出が一時的に抜けています') {
+    const gap=time-this.lastDetection;
+    // Flow must also agree with the fixed appearance. No unbounded coasting.
+    if(gap>.8||time-this.lastEvidence>.28)return this.lose('対象を確認できません：'+reason+'。再指定してください。');
+    this.bridge=true;this.note='検出補間中（'+gap.toFixed(1)+'秒）';return null;
+  }
+  finishFrame(time) {
+    if(this.state==='tracking'&&time-this.lastDetection>.25)this.hold(time);
   }
   match(candidates,time) {
-    if(this.state!=='tracking') return null; // Lost is latched until an explicit tap.
+    if(this.state!=='tracking')return null; // Lost stays latched until an explicit tap.
+    if(time-this.lastDetection>.8)return this.lose('人物検出での確認が途切れました。再指定してください。');
     const predicted=centerOf(this.box);
     const ranked=candidates.map(d=>{
       const b=d.boundingBox,c=centerOf(b);
@@ -73,17 +96,25 @@ export class PlayerTracker {
       const size=Math.abs(Math.log(Math.max(1,b.width*b.height)/(this.box.width*this.box.height)));
       const appearance=.7*appearanceDistance(this.anchor,d.appearance)+.3*appearanceDistance(this.recent,d.appearance);
       return {d,spatial,size,appearance,score:.45*spatial+.2*size+.8*appearance+.15*(1-iou(this.box,b))};
-    }).filter(r=>r.spatial<1 && r.size<.8 && r.appearance<.48).sort((a,b)=>a.score-b.score);
-    const best=ranked[0], second=ranked[1];
-    if(!best || best.score>.8) return this.lose('対象を見失いました。青い枠から選手を再指定してください。');
-    if(second && second.score-best.score<.18) return this.lose('似た選手が重なりました。選手を再指定してください。');
-    if(candidates.some(d=>d!==best.d && iou(d.boundingBox,best.d.boundingBox)>.28))
-      return this.lose('選手同士が重なりました。離れた位置で再指定してください。');
-    this.box={...best.d.boundingBox}; const c=centerOf(this.box);
-    this.kx.correct(c.x); this.ky.correct(c.y);
-    // Keep the original anchor fixed, preventing gradual identity drift.
-    if(best.score<.35) this.recent=this.recent.map((v,i)=>.95*v+.05*best.d.appearance[i]);
-    this.lastDetection=time;
+    }).filter(r=>r.spatial<1&&r.size<.85&&r.appearance<.55).sort((a,b)=>a.score-b.score);
+    const best=ranked[0],second=ranked[1];
+    if(!best||best.score>.85) {
+      // A foreign appearance on top of the predicted player is an occlusion,
+      // not a simple detector dropout. Do not transfer identity to it.
+      if(candidates.some(d=>iou(this.box,d.boundingBox)>.4&&appearanceDistance(this.anchor,d.appearance)>.65))
+        return this.lose('対象の位置に別の外見の選手がいます。再指定してください。');
+      return this.hold(time);
+    }
+    if(second&&second.score-best.score<.14)return this.lose('似た選手を区別できません。再指定してください。');
+    // Box overlap alone is common in basketball. Require a real identity conflict;
+    // preserve clear matches across modest overlap with a different uniform.
+    const conflict=candidates.some(d=>d!==best.d&&(
+      (iou(d.boundingBox,best.d.boundingBox)>.28&&appearanceDistance(this.anchor,d.appearance)<.55)||
+      iou(d.boundingBox,best.d.boundingBox)>.65));
+    if(conflict)return this.lose('遮蔽で選手を区別できません。再指定してください。');
+    this.box={...best.d.boundingBox};const c=centerOf(this.box);this.kx.correct(c.x);this.ky.correct(c.y);
+    if(best.score<.35)this.recent=this.recent.map((v,i)=>.95*v+.05*best.d.appearance[i]);
+    this.lastDetection=time;this.lastEvidence=time;this.bridge=false;this.note='人物検出で確認';
     return best.d;
   }
 }
