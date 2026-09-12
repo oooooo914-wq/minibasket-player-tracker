@@ -4,40 +4,70 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="theme-color" content="#111827" />
-  <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icons/icon-192.png" type="image/png" />
+  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+  <link rel="stylesheet" href="./styles.css" />
   <title>MiniBasket Player Tracker</title>
 </head>
 <body>
   <main class="app">
     <header>
-      <h1>MiniBasket Player Tracker</h1>
-      <p>動画を選び、追いたい選手をタップしてください。</p>
+      <p class="eyebrow">MINIBASKET / TRACKING MVP 0.2</p>
+      <h1>あの子の動きを、追いかける。</h1>
+      <p>動画を選ぶ → 停止する → 青い枠の選手をタップ → 再生</p>
+      <p class="privacy">動画は端末内で解析。アップロードはありません。</p>
     </header>
-
-    <section class="controls">
-      <label class="file-button">
-        動画を選ぶ
-        <input id="videoInput" type="file" accept="video/*" hidden />
-      </label>
+    <section class="controls" aria-label="動画とAI">
+      <label class="file-button">動画を選ぶ<input id="videoInput" type="file" accept="video/*" /></label>
       <button id="loadAiBtn" type="button">AIを準備</button>
-      <button id="resetBtn" type="button">追跡をリセット</button>
+      <button id="resetBtn" type="button">選び直す</button>
+      <button id="installBtn" type="button" hidden>ホーム画面に追加</button>
     </section>
-
-    <p id="status" class="status">動画を選んでください。</p>
-
-    <section class="stage" id="stage">
-      <video id="video" controls playsinline></video>
-      <canvas id="overlay"></canvas>
+    <p id="fileInfo" class="muted">まずは選手が大きく映る、短い区間で試してください。</p>
+    <p id="status" class="status" role="status" aria-live="polite">動画を選んでください。</p>
+    <section class="stage" id="stage" aria-label="動画と選手の枠">
+      <video id="video" playsinline preload="metadata" disablepictureinpicture></video>
+      <canvas id="overlay" aria-label="停止して青い枠の選手をタップ"></canvas>
     </section>
-
-    <section class="info">
-      <div><strong>対象:</strong> <span id="targetInfo">未選択</span></div>
-      <div><strong>AI:</strong> <span id="aiInfo">未準備</span></div>
-      <div><strong>検出:</strong> <span id="detectInfo">0人</span></div>
+    <section class="playback" aria-label="再生操作">
+      <div class="controls">
+        <button id="playBtn" data-video-control disabled type="button">▶ 再生</button>
+        <button id="backBtn" data-video-control disabled type="button">−1秒</button>
+        <button id="forwardBtn" data-video-control disabled type="button">＋1秒</button>
+        <button id="detectBtn" data-video-control disabled type="button">停止して検出</button>
+      </div>
+      <label for="seek">再生位置 <output id="timeInfo">0:00 / 0:00</output></label>
+      <input id="seek" data-video-control disabled type="range" min="0" max="0" value="0" step="0.1" />
+      <div class="controls settings">
+        <button id="fineBackBtn" data-video-control disabled type="button">−0.1秒</button>
+        <button id="fineForwardBtn" data-video-control disabled type="button">＋0.1秒</button>
+        <label>再生速度 <select id="speed"><option value="0.25">0.25倍</option><option value="0.5" selected>0.5倍</option><option value="1">1倍</option></select></label>
+        <label>人物検出 <select id="detectFps"><option value="5">5 fps</option><option value="7" selected>7 fps</option><option value="10">10 fps</option></select></label>
+      </div>
     </section>
+    <p class="muted">枠が小さい場合は番号で選択。再生中の画面タップでも停止できます。</p>
+    <div id="playerChoices" class="controls" aria-label="検出した選手の番号"></div>
+    <section class="info" aria-label="追跡状態">
+      <div><strong>対象</strong><span id="targetInfo">未選択</span></div>
+      <div><strong>AI</strong><span id="aiInfo">未準備</span></div>
+      <div><strong>検出</strong><span id="detectInfo">0人</span></div>
+      <div><strong>実測の検出頻度</strong><span id="fpsInfo">—</span></div>
+      <div><strong>カメラ移動</strong><span id="cameraInfo">補正未確定</span></div>
+      <div><strong>PWA</strong><span id="pwaInfo">準備中</span></div>
+    </section>
+    <aside>
+      <p><span class="dot green"></span>緑：追跡対象　<span class="dot blue"></span>青：検出した人物　<span class="dot yellow"></span>黄：直近8秒の画面上の軌跡</p>
+      <p><strong>走行距離はまだ計測しません。</strong>黄色の線にはカメラの動きも含まれます。見失いや重なりを検知すると停止しますが、同じ服の選手を取り違える可能性は残ります。緑の枠を見ながら確認してください。</p>
+      <details><summary>スマホで使うときのヒント</summary>
+        <p>Chromeのメニュー →「ホーム画面に追加」から起動できます。初回のAI準備には通信が必要です。動画や検出画像は送信しません。</p>
+        <p>重いときは0.25倍、人物検出5 fpsで試してください。別アプリへの移動や時間の移動後は、選手を選び直します。動画・追跡結果は再読込すると消えます。</p>
+        <p>試合全体をメモリへ展開せず、現在のフレームだけを解析します。20〜50分の実動画での動作・発熱・追跡精度は未検証です。</p>
+      </details>
+    </aside>
+    <noscript>このアプリにはJavaScriptが必要です。ChromeでJavaScriptを有効にしてください。</noscript>
+    <footer>MiniBasket Player Tracker · MVP 0.2</footer>
   </main>
-
-  <script type="module" src="app.js"></script>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>
