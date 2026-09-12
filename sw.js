@@ -1,5 +1,5 @@
 const PREFIX='minibasket-tracker-';
-const CACHE=PREFIX+'v2.0.0';
+const CACHE=PREFIX+'v2.0.1';
 const CORE=['./','./index.html','./styles.css','./app.js','./tracker.js','./ai-config.js',
   './detector-worker.js','./manifest.webmanifest','./icons/icon-192.png','./icons/icon-512.png'];
 const root=new URL('./',self.location.href);

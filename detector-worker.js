@@ -12,12 +12,19 @@ self.onmessage=async ({data:m})=>{
       tracker=new tracking.PlayerTracker();
       const {FilesetResolver,ObjectDetector}=await import(`${aiBase}/vision_bundle.mjs`);
       const vision=await FilesetResolver.forVisionTasks(`${aiBase}/wasm`);
+      // Give MediaPipe a dedicated WebGL canvas; never reuse a 2D capture canvas.
+      const inferenceCanvas=new OffscreenCanvas(1,1);
+      if(!inferenceCanvas.getContext('webgl2')) throw new Error('このブラウザではAIに必要なWebGL 2を利用できません。AndroidのChromeで開いてください。');
       detector=await ObjectDetector.createFromOptions(vision,{
+        canvas:inferenceCanvas,
         baseOptions:{modelAssetPath:config.MODEL_URL,delegate:'CPU'},runningMode:'VIDEO',
         categoryAllowlist:['person'],scoreThreshold:.35,maxResults:30,
       });
       frame=new OffscreenCanvas(1,1);frameCtx=frame.getContext('2d',{willReadFrequently:true});
       small=new OffscreenCanvas(256,144);smallCtx=small.getContext('2d',{willReadFrequently:true});
+      // A model download is not proof inference works: warm up before reporting ready.
+      lastStamp=performance.now();
+      detector.detectForVideo(new ImageData(32,32),lastStamp);
       reply('ready');
     } catch(e) {reply('error',{message:String(e.message||e)});}
     return;
