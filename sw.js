@@ -1,11 +1,11 @@
 const PREFIX='minibasket-tracker-';
-const CACHE=PREFIX+'v5.0.1';
+const CACHE=PREFIX+'v5.0.2';
 const CORE=['./','./index.html','./styles.css','./app.js','./tracker.js','./ai-config.js',
   './detector-worker.js','./manifest.webmanifest','./icons/icon-192.png','./icons/icon-512.png'];
 const root=new URL('./',self.location.href);
 const coreUrls=new Set(CORE.map(p=>new URL(p,root).href));
 self.addEventListener('install',event=>{
-  event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(CORE)));
+  event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(CORE.map(path=>new Request(new URL(path,root),{cache:'reload'})))));
   // Do not replace a running analysis. New versions activate after closing tabs.
 });
 self.addEventListener('activate',event=>{
