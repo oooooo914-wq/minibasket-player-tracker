@@ -18,11 +18,17 @@ function recordDiagnostic(event,details={}){
   const summary=Object.entries(diagnosticCounts).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,n])=>`${labels[k]||k} ${n}回`).join(' / ');
   $('diagnosticInfo').textContent=`記録 ${diagnosticRecords.length}件${summary?'：'+summary:''}`;
 }
-$('exportDiagnosticBtn').addEventListener('click',()=>{
+function diagnosticJson(){
   const report={schema:1,appVersion:'0.5',description:'判定ログ。原因の推定であり、実際の本人確認の正誤は保証しません。動画・画像・ファイル名は含みません。',
     settings:{mode:$('analysisMode').value,detectFps:Number($('detectFps').value),holdSeconds:Number($('holdSeconds').value)||2},
     frameSize:{width:analysisWidth,height:analysisHeight},counts:diagnosticCounts,records:diagnosticRecords};
-  const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));
+  return JSON.stringify(report,null,2);
+}
+$('showDiagnosticBtn').addEventListener('click',()=>{
+  const output=$('diagnosticText');output.value=diagnosticJson();output.hidden=false;
+});
+$('exportDiagnosticBtn').addEventListener('click',()=>{
+  const url=URL.createObjectURL(new Blob([diagnosticJson()],{type:'application/json'}));
   const a=document.createElement('a');a.href=url;a.download='minibasket-diagnostic-0.5.json';document.body.append(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 });
@@ -202,7 +208,7 @@ function tick(now) {
 }
 videoInput.addEventListener('change',async event=>{
   const file=event.target.files?.[0];if(!file)return;
-  diagnosticRecords=[];diagnosticCounts={};video.pause();clearTracking(`動画を読み込みました：${file.name}`);
+  diagnosticRecords=[];diagnosticCounts={};$('diagnosticText').value='';$('diagnosticText').hidden=true;video.pause();clearTracking(`動画を読み込みました：${file.name}`);
   video.removeAttribute('src');video.load();if(objectUrl)URL.revokeObjectURL(objectUrl);
   objectUrl=URL.createObjectURL(file);video.src=objectUrl;video.playbackRate=Number($('speed').value);
   $('fileInfo').textContent=`${file.name} · ${(file.size/1024/1024).toFixed(0)} MB · 端末内のみ`;

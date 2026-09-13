@@ -130,3 +130,11 @@ test('diagnostic export bounds history, preserves decision evidence and omits vi
  assert.equal(report.settings.holdSeconds,2);assert.deepEqual(report.records.at(-1).candidates[0].rejected,['position']);
  assert.ok(report.records.at(-1).videoTime>100);assert.equal(raw.includes('private-match'),false);assert.equal(raw.includes('blob:test'),false);
 });
+
+test('diagnostic text can be retrieved without browser download support',async()=>{
+ const h=harness();await selected(h);
+ await h.get('showDiagnosticBtn').emit('click');
+ const output=h.get('diagnosticText');assert.equal(output.hidden,false);
+ const report=JSON.parse(output.value);assert.equal(report.appVersion,'0.5');
+ assert.equal(report.records.at(-1).event,'select');assert.equal(h.downloads.length,0);
+});

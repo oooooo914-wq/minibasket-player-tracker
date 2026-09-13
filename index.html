@@ -63,8 +63,10 @@
       <div><strong>判定の記録</strong><span id="diagnosticInfo">記録 0件</span></div>
       <div><strong>PWA</strong><span id="pwaInfo">準備中</span></div>
     </section>
-    <section class="controls"><button id="exportDiagnosticBtn" type="button">診断ログを保存</button></section>
-    <p class="muted">止まった原因を確認するための判定記録です。保存したJSONをこのチャットに添付すると調査に使えます。動画・画像・ファイル名は含まず、自動送信しません。</p>
+    <section class="controls"><button id="showDiagnosticBtn" type="button">診断ログを表示</button>
+    <button id="exportDiagnosticBtn" type="button">診断ログを保存</button></section>
+    <p class="muted">止まった原因を確認するための判定記録です。保存したJSONをこのチャットに添付すると調査に使えます。保存できない場合は「診断ログを表示」から長押しでコピーできます。動画・画像・ファイル名は含まず、自動送信しません。</p>
+    <textarea id="diagnosticText" aria-label="診断ログ（長押ししてコピーできます）" readonly hidden rows="6" style="box-sizing:border-box;width:100%;font-size:12px"></textarea>
     <aside>
       <p><span class="dot green"></span>緑：検出確認済み／黄色い点線：予測・未確認　<span class="dot blue"></span>青：検出した人物　<span class="dot yellow"></span>黄：直近8秒の画面上の軌跡</p>
       <p><strong>走行距離はまだ計測しません。</strong>黄色の線にはカメラの動きも含まれます。検出抜けや密集時は設定時間まで予測保留し、未確認の位置は軌跡に含めません。区別できない場合は停止しますが、同じ服の選手を取り違える可能性は残ります。緑の枠を見ながら確認してください。</p>
