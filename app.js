@@ -9,6 +9,23 @@ let analysisWidth=768,analysisHeight=432,rafId=null,selectionTime=-1,selectable=
 let processingMs=0,lastFrameWall=0,detectionCount=0,rateStart=0,pendingForce=false,installPrompt=null;
 let bridging=false,waitingWorker=null,reloadForUpdate=false;
 let sequenceRunning=false,sequenceSeek=null,sequenceTimer=null;
+let latestDiagnostic=null,diagnosticRecords=[],diagnosticCounts={};
+function recordDiagnostic(event,details={}){
+  const row={event,videoTime:Number((video.currentTime||0).toFixed(3)),...details};
+  diagnosticRecords.push(row);if(diagnosticRecords.length>1000)diagnosticRecords.shift();
+  if(event==='analysis'&&details.code&&details.code!=='confirmed')diagnosticCounts[details.code]=(diagnosticCounts[details.code]||0)+1;
+  const labels={score:'総合条件',no_detection:'検出なし',position:'位置差',appearance:'外見差',size:'枠の変化',ambiguity:'候補競合',occlusion:'遮蔽',identity_ambiguous:'本人不明',recovery:'再確認',gap:'確認抜け'};
+  const summary=Object.entries(diagnosticCounts).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,n])=>`${labels[k]||k} ${n}回`).join(' / ');
+  $('diagnosticInfo').textContent=`記録 ${diagnosticRecords.length}件${summary?'：'+summary:''}`;
+}
+$('exportDiagnosticBtn').addEventListener('click',()=>{
+  const report={schema:1,appVersion:'0.5',description:'判定ログ。原因の推定であり、実際の本人確認の正誤は保証しません。動画・画像・ファイル名は含みません。',
+    settings:{mode:$('analysisMode').value,detectFps:Number($('detectFps').value),holdSeconds:Number($('holdSeconds').value)||2},
+    frameSize:{width:analysisWidth,height:analysisHeight},counts:diagnosticCounts,records:diagnosticRecords};
+  const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));
+  const a=document.createElement('a');a.href=url;a.download='minibasket-diagnostic-0.5.json';document.body.append(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+});
 const isRunning=()=>sequenceRunning||!video.paused;
 function stopSequence(){sequenceRunning=false;clearTimeout(sequenceTimer);sequenceTimer=null;}
 function advanceSequence(ms=0){
@@ -49,11 +66,17 @@ function draw() {
   }
   if(video.paused&&!sequenceRunning) detections.forEach((d,i)=>{
     const b=videoToScreen(d.boundingBox);ctx.strokeStyle='#60a5fa';ctx.lineWidth=2;ctx.strokeRect(b.x,b.y,b.width,b.height);
-    ctx.fillStyle='#172554';ctx.fillRect(b.x,b.y,24,22);ctx.fillStyle='#fff';ctx.font='bold 13px system-ui';ctx.fillText(String(i+1),b.x+6,b.y+16);
+    ctx.fillStyle='#172554';ctx.fillRect(b.x,b.y,56,22);ctx.fillStyle='#fff';ctx.font='bold 12px system-ui';ctx.fillText('候補'+(i+1),b.x+3,b.y+16);
   });
   if(target&&state==='tracking') {
-    const b=videoToScreen(target);ctx.strokeStyle=bridging?'#fbbf24':'#4ade80';ctx.lineWidth=3;ctx.strokeRect(b.x,b.y,b.width,b.height);
-    ctx.fillStyle=bridging?'#fbbf24':'#4ade80';ctx.beginPath();ctx.arc(b.x+b.width/2,b.y+b.height,5,0,Math.PI*2);ctx.fill();
+    const b=videoToScreen(target);ctx.setLineDash(bridging?[6,4]:[]);ctx.strokeStyle=bridging?'#fbbf24':'#4ade80';ctx.lineWidth=3;ctx.strokeRect(b.x,b.y,b.width,b.height);
+    ctx.setLineDash([]);ctx.fillStyle=bridging?'#fbbf24':'#4ade80';ctx.font='bold 13px system-ui';
+    ctx.fillText(bridging?'対象の予測・未確認':'対象',Math.max(0,b.x),Math.max(15,b.y-5));
+    if(!bridging){ctx.beginPath();ctx.arc(b.x+b.width/2,b.y+b.height,5,0,Math.PI*2);ctx.fill();}
+    if(bridging&&latestDiagnostic?.gate){
+      const gate=latestDiagnostic.gate,search=videoToScreen({originX:target.originX+target.width/2-gate,originY:target.originY+target.height/2-gate,width:gate*2,height:gate*2});
+      ctx.setLineDash([2,6]);ctx.lineWidth=1;ctx.strokeRect(search.x,search.y,search.width,search.height);ctx.setLineDash([]);
+    }
   }
 }
 function updateTime() {
@@ -64,13 +87,13 @@ function updateTime() {
 function updatePlayback() {$('playBtn').textContent=isRunning()?'❚❚ 一時停止':'▶ 再生';updateTime();draw();}
 function clearTracking(message='停止して、青い枠の選手をタップしてください。') {
   stopSequence();sequenceSeek=null;epoch++;worker?.postMessage({type:'reset'});state='idle';target=null;trail=[];detections=[];
-  bridging=false;$('trackingInfo').textContent='未選択';
+  bridging=false;latestDiagnostic=null;$('trackingInfo').textContent='未選択';recordDiagnostic('reset');
   selectable=false;lastVideoTime=-1;targetInfo.textContent='未選択';detectInfo.textContent='0人';
   $('playerChoices').replaceChildren();setStatus(message);draw();
 }
 function lose(message) {
   if(state==='lost') return;
-  stopSequence();state='lost';target=null;trail=[];targetInfo.textContent='再指定が必要';$('stopInfo').textContent=message;video.pause();
+  recordDiagnostic('stop',{reason:message,diagnostic:latestDiagnostic});stopSequence();state='lost';target=null;trail=[];targetInfo.textContent='再指定が必要';$('stopInfo').textContent=message;video.pause();
   setStatus(message);updatePlayback();if(video.paused)requestFrame(true);
 }
 function failAi(message) {
@@ -99,12 +122,18 @@ async function initDetector() {
       if(m.type==='error') {failAi(m.message);resolve();return;}
       if(m.type==='selected') {
         if(m.epoch!==epoch)return;
+        recordDiagnostic('select',{box:m.box});
         target=m.box;state='tracking';bridging=false;trail=[];targetInfo.textContent='選択済み';$('trackingInfo').textContent='人物検出で確認';
         setStatus('緑の枠を確認し、再生してください。違う場合は停止して選び直せます。');draw();return;
       }
       if(m.type!=='result')return;
       busy=false;clearTimeout(frameTimer);
       if(m.epoch!==epoch) {if(pendingForce)requestFrame(true);return;}
+      const wasBridging=bridging;
+      if(m.diagnostic){
+        latestDiagnostic=m.diagnostic;
+        if(m.detected&&state!=='idle'&&state!=='lost')recordDiagnostic('analysis',{frameTime:m.time,lag:video.currentTime-m.time,ms:m.ms,sequence:!!m.sequence,...m.diagnostic});
+      }
       processingMs=.8*processingMs+.2*m.ms;
       if(video.currentTime-m.time>.35 && !video.paused) {
         if(state==='tracking')lose('処理が動画に追いつきません。再生速度を下げ、選手を再指定してください。');
@@ -118,8 +147,9 @@ async function initDetector() {
       bridging=!!m.bridge;
       if(state!=='lost')$('trackingInfo').textContent=m.note||'人物検出で確認';
       if(state==='tracking') {
-        targetInfo.textContent=bridging?'一時補間中':'追跡中';const b=m.box;
-        if(b)trail.push({x:b.originX+b.width/2,y:b.originY+b.height,time:m.time});
+        targetInfo.textContent=bridging?'予測保留（未確認）':'追跡中';const b=m.box;
+        if(bridging||wasBridging)trail=[];
+        if(b&&!bridging)trail.push({x:b.originX+b.width/2,y:b.originY+b.height,time:m.time});
         if(trail.length>600)trail.splice(0,trail.length-600);
       }
       if(m.detected)detectionCount++;
@@ -137,8 +167,8 @@ async function initDetector() {
 function renderChoices() {
   const root=$('playerChoices');root.replaceChildren();
   if(isRunning()||!selectable)return;
-  detections.forEach((_,i)=>{const b=document.createElement('button');b.type='button';b.textContent=String(i+1);
-    b.setAttribute('aria-label',`選手 ${i+1} を選択`);b.addEventListener('click',()=>selectPlayer(i));root.append(b);});
+  detections.forEach((_,i)=>{const b=document.createElement('button');b.type='button';b.textContent='候補 '+(i+1);
+    b.setAttribute('aria-label',`候補 ${i+1} を選択`);b.addEventListener('click',()=>selectPlayer(i));root.append(b);});
 }
 function selectPlayer(index) {
   if(!selectable||isRunning()||busy||Math.abs(video.currentTime-selectionTime)>.08){setStatus('停止画面の検出を待ってから、もう一度タップしてください。');requestFrame(true);return;}
@@ -160,7 +190,7 @@ async function requestFrame(force=false) {
     const bitmap=await createImageBitmap(capture);
     if(token!==epoch||!worker){bitmap.close();busy=false;if(pendingForce)requestFrame(true);return;}
     frameTimer=setTimeout(()=>failAi('解析が応答しません。再試行してください。'),15000);
-    worker.postMessage({type:'frame',bitmap,epoch,time,force,sequence:sequenceRunning,fps:Number($('detectFps').value)},[bitmap]);
+    worker.postMessage({type:'frame',bitmap,epoch,time,force,sequence:sequenceRunning,holdSeconds:Number($('holdSeconds').value)||2,fps:Number($('detectFps').value)},[bitmap]);
   } catch(e){busy=false;failAi(e.message);}
 }
 function tick(now) {
@@ -172,7 +202,7 @@ function tick(now) {
 }
 videoInput.addEventListener('change',async event=>{
   const file=event.target.files?.[0];if(!file)return;
-  video.pause();clearTracking(`動画を読み込みました：${file.name}`);
+  diagnosticRecords=[];diagnosticCounts={};video.pause();clearTracking(`動画を読み込みました：${file.name}`);
   video.removeAttribute('src');video.load();if(objectUrl)URL.revokeObjectURL(objectUrl);
   objectUrl=URL.createObjectURL(file);video.src=objectUrl;video.playbackRate=Number($('speed').value);
   $('fileInfo').textContent=`${file.name} · ${(file.size/1024/1024).toFixed(0)} MB · 端末内のみ`;

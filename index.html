@@ -13,7 +13,7 @@
 <body>
   <main class="app">
     <header>
-      <p class="eyebrow">MINIBASKET / TRACKING MVP 0.4</p>
+      <p class="eyebrow">MINIBASKET / TRACKING MVP 0.5</p>
       <h1>あの子の動きを、追いかける。</h1>
       <p>動画を選ぶ → 停止する → 青い枠の選手をタップ → 再生</p>
       <p class="privacy">動画は端末内で解析。アップロードはありません。</p>
@@ -45,11 +45,12 @@
         <button id="fineForwardBtn" data-video-control disabled type="button">＋0.1秒</button>
         <label>追跡モード <select id="analysisMode"><option value="accuracy" selected>精度優先（解析を待つ）</option><option value="realtime">連続再生</option></select></label>
         <label>再生速度 <select id="speed"><option value="0.25">0.25倍</option><option value="0.5" selected>0.5倍</option><option value="1">1倍</option></select></label>
+        <label>予測保留の上限 <select id="holdSeconds"><option value="1">1秒</option><option value="2" selected>2秒</option><option value="3">3秒</option></select></label>
         <label>人物検出 <select id="detectFps"><option value="5">5 fps</option><option value="7" selected>7 fps</option><option value="10">10 fps</option></select></label>
       </div>
     </section>
     <p class="muted">精度優先は、選手を選ぶと解析に合わせてコマ送りします（音声なし）。再生速度は上限です。通常の動画確認には「連続再生」を選べます。</p>
-    <p class="muted">枠が小さい場合は番号で選択。再生中の画面タップでも停止できます。</p>
+    <p class="muted">「候補1」などの番号は、この停止画面で選ぶための番号です。背番号の読み取りはしていません。選んだ子には固定の「対象」マーカーを表示します。</p>
     <div id="playerChoices" class="controls" aria-label="検出した選手の番号"></div>
     <section class="info" aria-label="追跡状態">
       <div><strong>対象</strong><span id="targetInfo">未選択</span></div>
@@ -59,11 +60,14 @@
       <div><strong>カメラ移動</strong><span id="cameraInfo">補正未確定</span></div>
       <div><strong>追跡の確認方法</strong><span id="trackingInfo">未選択</span></div>
       <div><strong>直前の停止理由</strong><span id="stopInfo">—</span></div>
+      <div><strong>判定の記録</strong><span id="diagnosticInfo">記録 0件</span></div>
       <div><strong>PWA</strong><span id="pwaInfo">準備中</span></div>
     </section>
+    <section class="controls"><button id="exportDiagnosticBtn" type="button">診断ログを保存</button></section>
+    <p class="muted">止まった原因を確認するための判定記録です。保存したJSONをこのチャットに添付すると調査に使えます。動画・画像・ファイル名は含まず、自動送信しません。</p>
     <aside>
-      <p><span class="dot green"></span>緑：検出確認済み／黄枠：一時補間　<span class="dot blue"></span>青：検出した人物　<span class="dot yellow"></span>黄：直近8秒の画面上の軌跡</p>
-      <p><strong>走行距離はまだ計測しません。</strong>黄色の線にはカメラの動きも含まれます。短い検出抜けは黄枠でつなぎ、対象を確認できない場合は停止しますが、同じ服の選手を取り違える可能性は残ります。緑の枠を見ながら確認してください。</p>
+      <p><span class="dot green"></span>緑：検出確認済み／黄色い点線：予測・未確認　<span class="dot blue"></span>青：検出した人物　<span class="dot yellow"></span>黄：直近8秒の画面上の軌跡</p>
+      <p><strong>走行距離はまだ計測しません。</strong>黄色の線にはカメラの動きも含まれます。検出抜けや密集時は設定時間まで予測保留し、未確認の位置は軌跡に含めません。区別できない場合は停止しますが、同じ服の選手を取り違える可能性は残ります。緑の枠を見ながら確認してください。</p>
       <details><summary>スマホで使うときのヒント</summary>
         <p>Chromeのメニュー →「ホーム画面に追加」から起動できます。初回のAI準備には通信が必要です。動画や検出画像は送信しません。</p>
         <p>重いときは0.25倍、人物検出5 fpsで試してください。別アプリへの移動や時間の移動後は、選手を選び直します。動画・追跡結果は再読込すると消えます。</p>
@@ -71,7 +75,7 @@
       </details>
     </aside>
     <noscript>このアプリにはJavaScriptが必要です。ChromeでJavaScriptを有効にしてください。</noscript>
-    <footer>MiniBasket Player Tracker · MVP 0.4</footer>
+    <footer>MiniBasket Player Tracker · MVP 0.5</footer>
   </main>
   <script type="module" src="./app.js"></script>
 </body>

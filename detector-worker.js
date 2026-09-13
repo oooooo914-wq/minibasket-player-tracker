@@ -1,8 +1,8 @@
 // Classic Worker intentionally: MediaPipe's WASM loader uses importScripts.
 let detector, tracker, sparseFlow, describe, aiBase, frame, frameCtx, small, smallCtx, crop, cropCtx, targetRegion;
 let previous=null, candidates=[], lastDetection=-Infinity, lastTime=-Infinity;
-let lastStamp=0;
-function clear() {tracker.reset();previous=null;candidates=[];lastDetection=-Infinity;lastTime=-Infinity;}
+let lastStamp=0,detectionSerial=0,lastCamera=null;
+function clear() {tracker.reset();previous=null;candidates=[];lastDetection=-Infinity;lastTime=-Infinity;lastCamera=null;detectionSerial=0;}
 function reply(type,extra={}) {self.postMessage({type,...extra});}
 self.onmessage=async ({data:m})=>{
   if(m.type==='init') {
@@ -39,6 +39,7 @@ self.onmessage=async ({data:m})=>{
   }
   if(m.type!=='frame') return;
   const start=performance.now();
+  tracker.maxGap=Math.max(1,Math.min(3,Number(m.holdSeconds)||2));
   try {
     if(frame.width!==m.bitmap.width||frame.height!==m.bitmap.height) {
       frame.width=m.bitmap.width;frame.height=m.bitmap.height;clear();
@@ -52,17 +53,26 @@ self.onmessage=async ({data:m})=>{
     const scale=b=>({originX:b.originX*ratio,originY:b.originY*ratio,width:b.width*ratio,height:b.height*ratio});
     let motion={};
     if(tracker.state==='tracking' && m.time!==lastTime) {
-      motion.camera=sparseFlow(previous,gray,384,small.height,null,candidates.map(d=>scale(d.boundingBox)));
-      motion.local=sparseFlow(previous,gray,384,small.height,scale(tracker.box));
+      const dt=m.time-lastTime;
+      const cameraHint=lastCamera?{dx:lastCamera.dx*Math.min(3,dt/lastCamera.dt),dy:lastCamera.dy*Math.min(3,dt/lastCamera.dt)}:undefined;
+      motion.camera=sparseFlow(previous,gray,384,small.height,null,candidates.map(d=>scale(d.boundingBox)),cameraHint);
+      if(motion.camera.reliable)lastCamera={dx:motion.camera.dx,dy:motion.camera.dy,dt:Math.max(.001,dt)};
+      const hint={dx:tracker.kx.v*dt*ratio+(motion.camera.reliable?motion.camera.dx:0),dy:tracker.ky.v*dt*ratio+(motion.camera.reliable?motion.camera.dy:0)};
+      motion.local=sparseFlow(previous,gray,384,small.height,scale(tracker.box),[],hint);
       for(const flow of Object.values(motion)){flow.dx/=ratio;flow.dy/=ratio;}
+      const proposal={...tracker.box,originX:tracker.box.originX+motion.local.dx,originY:tracker.box.originY+motion.local.dy};
+      motion.local.appearance=describe(rgba,384,small.height,scale(proposal));
       tracker.advance(m.time,motion);
-      tracker.observeAppearance(describe(rgba,384,small.height,scale(tracker.box)),m.time);
     }
     const detected=m.force || m.time-lastDetection>=1/m.fps-1e-6 || m.time<lastDetection;
+    let search='flow';
     if(detected) {
+      detectionSerial++;
       lastStamp=Math.max(lastStamp+1,performance.now());
       // Exactly one inference: selected-player crop, or full frame while selecting.
-      const region=tracker.state==='tracking'&&(!m.force||m.sequence)?targetRegion(tracker.box,w,h,m.time-tracker.lastDetection):null;
+      const wideSearch=tracker.bridge&&m.time-tracker.lastDetection>.4&&detectionSerial%3===0;
+      const region=tracker.state==='tracking'&&(!m.force||m.sequence)&&!wideSearch?targetRegion(tracker.box,w,h,m.time-tracker.lastDetection,tracker.gate*.4):null;
+      search=region?'周辺拡大':'全画面';
       let input=frame;
       if(region){
         crop.width=320;crop.height=Math.max(1,Math.round(320*region.height/region.width));
@@ -86,6 +96,7 @@ self.onmessage=async ({data:m})=>{
     reply('result',{epoch:m.epoch,sequence:!!m.sequence,time:m.time,width:w,height:h,detected,
       detections:candidates.map(d=>({boundingBox:d.boundingBox,score:d.score})),
       box:tracker.box,state:tracker.state,reason:tracker.reason,bridge:tracker.bridge,note:tracker.note,
+      diagnostic:{...tracker.diagnostics(),search,camera:motion.camera?{dx:motion.camera.dx,dy:motion.camera.dy,reliable:motion.camera.reliable}:null},
       camera:motion.camera?.reliable?'パン補助あり':'補正未確定',ms:performance.now()-start,
     });
   } catch(e) {m.bitmap.close();reply('error',{epoch:m.epoch,message:String(e.message||e)});}

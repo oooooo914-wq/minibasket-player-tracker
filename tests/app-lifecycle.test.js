@@ -6,25 +6,26 @@ import vm from 'node:vm';
 import fs from 'node:fs';
 const source=fs.readFileSync(new URL('../app.js',import.meta.url),'utf8').replaceAll('import.meta.url',"'https://example.test/minibasket-player-tracker/app.js'");
 function harness() {
-  const ctx2d=new Proxy({},{get:()=>()=>{}}),nodes=new Map(),timers=new Map();let timer=0,worker,wall=1000;
+  const ctx2d=new Proxy({},{get:()=>()=>{}}),nodes=new Map(),timers=new Map();let timer=0,worker,wall=1000;const downloads=[],blobs=[];
   class Element {
     constructor(id='') {this.id=id;this.listeners={};this.children=[];this.value='';this.width=640;this.height=360;this.style={};this.classList={toggle(){}};this.textContent='';this.src='';this.paused=true;this.readyState=0;this.currentTime=0;this.duration=1800;this.videoWidth=1280;this.videoHeight=720;this.seeking=false;}
     addEventListener(e,f){(this.listeners[e]??=[]).push(f);}
     emit(e,arg={}){return Promise.all((this.listeners[e]||[]).map(f=>f(arg)));}
     getContext(){return ctx2d;}getBoundingClientRect(){return {left:0,top:0,width:640,height:360};}
     matches(){return false;}replaceChildren(){this.children=[];}append(b){this.children.push(b);}setAttribute(){}
+    click(){downloads.push({href:this.href,download:this.download});}remove(){}
     removeAttribute(k){if(k==='src')this.src='';}load(){}pause(){const was=this.paused;this.paused=true;if(!was)this.emit('pause');}
     async play(){this.paused=false;await this.emit('play');}
   }
   const get=id=>{if(!nodes.has(id))nodes.set(id,new Element(id));return nodes.get(id);};
-  get('speed').value='.5';get('detectFps').value='7';get('analysisMode').value='realtime';
-  const document=Object.assign(new Element('document'),{hidden:false,getElementById:get,createElement:tag=>new Element(tag),querySelectorAll:()=>[]});
+  get('speed').value='.5';get('detectFps').value='7';get('analysisMode').value='realtime';get('holdSeconds').value='2';
+  const document=Object.assign(new Element('document'),{body:new Element('body'),hidden:false,getElementById:get,createElement:tag=>new Element(tag),querySelectorAll:()=>[]});
   class FakeWorker {constructor(){worker=this;this.messages=[];}postMessage(m){this.messages.push(m);}terminate(){}reply(m){this.onmessage({data:m});}}
   const sandbox={document,window:{devicePixelRatio:1,Worker:FakeWorker,OffscreenCanvas:class{},createImageBitmap:async()=>({close(){}}),addEventListener(){}},
-    navigator:{},URL,Worker:FakeWorker,performance:{now:()=>wall},createImageBitmap:async()=>({close(){}}),
+    navigator:{},Blob,URL:class extends URL{static createObjectURL(b){blobs.push(b);return 'blob:test';}static revokeObjectURL(){}},Worker:FakeWorker,performance:{now:()=>wall},createImageBitmap:async()=>({close(){}}),
     setTimeout:(fn,delay)=>{timers.set(++timer,{fn,delay});return timer;},clearTimeout:id=>timers.delete(id),requestAnimationFrame:()=>1,cancelAnimationFrame(){}};
   vm.runInNewContext(source,sandbox);
-  return {get,document,elapse(ms){wall+=ms;},step(){const entry=[...timers.entries()].find(([,t])=>t.delay<1000);if(!entry)return false;timers.delete(entry[0]);entry[1].fn();return true;},async ready(){const p=get('loadAiBtn').emit('click');worker.reply({type:'ready'});await p;return worker;}};
+  return {get,document,downloads,blobs,elapse(ms){wall+=ms;},step(){const entry=[...timers.entries()].find(([,t])=>t.delay<1000);if(!entry)return false;timers.delete(entry[0]);entry[1].fn();return true;},async ready(){const p=get('loadAiBtn').emit('click');worker.reply({type:'ready'});await p;return worker;}};
 }
 const box={originX:100,originY:50,width:30,height:70};
 const flush=async()=>{for(let i=0;i<6;i++)await Promise.resolve();};
@@ -107,4 +108,25 @@ test('accuracy mode stops cleanly at the last decoded frame',async()=>{
  w.reply({...result,time:v.currentTime,state:'tracking',box,sequence:true,ms:100});
  assert.equal(h.step(),false);assert.equal(h.get('playBtn').textContent,'▶ 再生');
  assert.match(h.get('status').textContent,/終わりました/);
+});
+
+test('pending prediction continues accuracy playback and forwards the hold setting',async()=>{
+ const h=harness();h.get('holdSeconds').value='3';const {w,v,result}=await startAccuracy(h);
+ assert.equal(w.messages.findLast(m=>m.type==='frame').holdSeconds,3);
+ w.reply({...result,state:'tracking',box,sequence:true,bridge:true,note:'予測保留',diagnostic:{code:'no_detection',pending:true,gate:80}});
+ assert.equal(h.get('targetInfo').textContent,'予測保留（未確認）');assert.equal(h.step(),true);assert.ok(v.currentTime>0);
+});
+test('diagnostic export bounds history, preserves decision evidence and omits video data',async()=>{
+ const h=harness(),{w,v,result}=await selected(h);h.get('fileInfo').textContent='private-match.mp4';
+ for(let i=0;i<1100;i++){
+   v.currentTime=i/10;
+   w.reply({...result,time:v.currentTime,state:'tracking',box,bridge:true,
+     diagnostic:{code:'position',pending:true,gate:75,candidates:[{box,spatial:1.4,appearance:.1,rejected:['position']}]}});
+ }
+ await h.get('exportDiagnosticBtn').emit('click');
+ assert.equal(h.downloads[0].download,'minibasket-diagnostic-0.5.json');
+ const raw=await h.blobs[0].text(),report=JSON.parse(raw);
+ assert.equal(report.records.length,1000);assert.equal(report.counts.position,1100);
+ assert.equal(report.settings.holdSeconds,2);assert.deepEqual(report.records.at(-1).candidates[0].rejected,['position']);
+ assert.ok(report.records.at(-1).videoTime>100);assert.equal(raw.includes('private-match'),false);assert.equal(raw.includes('blob:test'),false);
 });
