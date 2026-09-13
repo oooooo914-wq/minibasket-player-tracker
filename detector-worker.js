@@ -58,11 +58,11 @@ self.onmessage=async ({data:m})=>{
       tracker.advance(m.time,motion);
       tracker.observeAppearance(describe(rgba,384,small.height,scale(tracker.box)),m.time);
     }
-    const detected=m.force || m.time-lastDetection>=1/m.fps || m.time<lastDetection;
+    const detected=m.force || m.time-lastDetection>=1/m.fps-1e-6 || m.time<lastDetection;
     if(detected) {
       lastStamp=Math.max(lastStamp+1,performance.now());
       // Exactly one inference: selected-player crop, or full frame while selecting.
-      const region=tracker.state==='tracking'&&!m.force?targetRegion(tracker.box,w,h,m.time-tracker.lastDetection):null;
+      const region=tracker.state==='tracking'&&(!m.force||m.sequence)?targetRegion(tracker.box,w,h,m.time-tracker.lastDetection):null;
       let input=frame;
       if(region){
         crop.width=320;crop.height=Math.max(1,Math.round(320*region.height/region.width));
@@ -83,7 +83,7 @@ self.onmessage=async ({data:m})=>{
     }
     tracker.finishFrame(m.time);
     previous=gray;lastTime=m.time;
-    reply('result',{epoch:m.epoch,time:m.time,width:w,height:h,detected,
+    reply('result',{epoch:m.epoch,sequence:!!m.sequence,time:m.time,width:w,height:h,detected,
       detections:candidates.map(d=>({boundingBox:d.boundingBox,score:d.score})),
       box:tracker.box,state:tracker.state,reason:tracker.reason,bridge:tracker.bridge,note:tracker.note,
       camera:motion.camera?.reliable?'パン補助あり':'補正未確定',ms:performance.now()-start,

@@ -8,6 +8,24 @@ let detections=[],target=null,trail=[],state='idle',objectUrl=null,lastVideoTime
 let analysisWidth=768,analysisHeight=432,rafId=null,selectionTime=-1,selectable=false;
 let processingMs=0,lastFrameWall=0,detectionCount=0,rateStart=0,pendingForce=false,installPrompt=null;
 let bridging=false,waitingWorker=null,reloadForUpdate=false;
+let sequenceRunning=false,sequenceSeek=null,sequenceTimer=null;
+const isRunning=()=>sequenceRunning||!video.paused;
+function stopSequence(){sequenceRunning=false;clearTimeout(sequenceTimer);sequenceTimer=null;}
+function advanceSequence(ms=0){
+  if(!sequenceRunning||busy||document.hidden||state!=='tracking')return;
+  if(video.currentTime>=(video.duration||0)-.005){stopSequence();updatePlayback();setStatus('この区間の追跡が終わりました。');return;}
+  const step=1/Math.min(15,Number($('detectFps').value)*2);
+  const delay=Math.max(0,1000*step/Number($('speed').value)-ms);
+  clearTimeout(sequenceTimer);
+  sequenceTimer=setTimeout(()=>{
+    sequenceTimer=null;
+    if(!sequenceRunning||busy||document.hidden||state!=='tracking')return;
+    sequenceSeek=Math.min(video.duration-.001,video.currentTime+step);
+    video.currentTime=sequenceSeek;
+  },delay);
+}
+function pausePlayback(){stopSequence();video.pause();updatePlayback();requestFrame(true);}
+
 const capture=document.createElement('canvas');
 const captureCtx=capture.getContext('2d');
 function setStatus(text) {statusEl.textContent=text;statusEl.classList.toggle('warning',state==='lost');}
@@ -29,7 +47,7 @@ function draw() {
     ctx.beginPath();visible.forEach((p,i)=>{const s=videoToScreen({originX:p.x,originY:p.y,width:0,height:0});
       if(i===0)ctx.moveTo(s.x,s.y);else ctx.lineTo(s.x,s.y);});ctx.lineWidth=2;ctx.strokeStyle='#fbbf24';ctx.stroke();
   }
-  if(video.paused) detections.forEach((d,i)=>{
+  if(video.paused&&!sequenceRunning) detections.forEach((d,i)=>{
     const b=videoToScreen(d.boundingBox);ctx.strokeStyle='#60a5fa';ctx.lineWidth=2;ctx.strokeRect(b.x,b.y,b.width,b.height);
     ctx.fillStyle='#172554';ctx.fillRect(b.x,b.y,24,22);ctx.fillStyle='#fff';ctx.font='bold 13px system-ui';ctx.fillText(String(i+1),b.x+6,b.y+16);
   });
@@ -43,20 +61,20 @@ function updateTime() {
   $('timeInfo').textContent=`${format(video.currentTime)} / ${format(video.duration)}`;
   if(!$('seek').matches(':active')) $('seek').value=video.currentTime||0;
 }
-function updatePlayback() {$('playBtn').textContent=video.paused?'▶ 再生':'❚❚ 一時停止';updateTime();draw();}
+function updatePlayback() {$('playBtn').textContent=isRunning()?'❚❚ 一時停止':'▶ 再生';updateTime();draw();}
 function clearTracking(message='停止して、青い枠の選手をタップしてください。') {
-  epoch++;worker?.postMessage({type:'reset'});state='idle';target=null;trail=[];detections=[];
+  stopSequence();sequenceSeek=null;epoch++;worker?.postMessage({type:'reset'});state='idle';target=null;trail=[];detections=[];
   bridging=false;$('trackingInfo').textContent='未選択';
   selectable=false;lastVideoTime=-1;targetInfo.textContent='未選択';detectInfo.textContent='0人';
   $('playerChoices').replaceChildren();setStatus(message);draw();
 }
 function lose(message) {
   if(state==='lost') return;
-  state='lost';target=null;trail=[];targetInfo.textContent='再指定が必要';$('stopInfo').textContent=message;video.pause();
-  setStatus(message);draw();
+  stopSequence();state='lost';target=null;trail=[];targetInfo.textContent='再指定が必要';$('stopInfo').textContent=message;video.pause();
+  setStatus(message);updatePlayback();if(video.paused)requestFrame(true);
 }
 function failAi(message) {
-  const wasTracking=state==='tracking';worker?.terminate();worker=null;ready=false;busy=false;
+  const wasTracking=state==='tracking';stopSequence();worker?.terminate();worker=null;ready=false;busy=false;
   clearTimeout(frameTimer);clearTimeout(initTimer);loadAiBtn.disabled=false;aiInfo.textContent='読込・実行エラー';
   if(wasTracking) lose('AIが停止しました。再準備後に選手を再指定してください。');
   video.pause();setStatus(`AIを準備できませんでした。「AIを準備」で再試行してください。${message}`);
@@ -93,7 +111,7 @@ async function initDetector() {
         requestFrame(true);return;
       }
       analysisWidth=m.width;analysisHeight=m.height;
-      detections=m.detections;selectionTime=m.time;selectable=video.paused&&Math.abs(video.currentTime-m.time)<.08;
+      detections=m.detections;selectionTime=m.time;selectable=video.paused&&!sequenceRunning&&Math.abs(video.currentTime-m.time)<.08;
       detectInfo.textContent=`${detections.length}人`;target=m.box;
       if(m.state==='lost')lose(m.reason);
       else if(state!=='lost')state=m.state;
@@ -110,6 +128,7 @@ async function initDetector() {
       $('cameraInfo').textContent=m.camera;
       renderChoices();draw();
       if(pendingForce)requestFrame(true);
+      else if(sequenceRunning&&m.sequence)advanceSequence(m.ms);
     };
     worker.postMessage({type:'init'});
   });
@@ -117,12 +136,12 @@ async function initDetector() {
 }
 function renderChoices() {
   const root=$('playerChoices');root.replaceChildren();
-  if(!video.paused||!selectable)return;
+  if(isRunning()||!selectable)return;
   detections.forEach((_,i)=>{const b=document.createElement('button');b.type='button';b.textContent=String(i+1);
     b.setAttribute('aria-label',`選手 ${i+1} を選択`);b.addEventListener('click',()=>selectPlayer(i));root.append(b);});
 }
 function selectPlayer(index) {
-  if(!selectable||!video.paused||busy||Math.abs(video.currentTime-selectionTime)>.08){setStatus('停止画面の検出を待ってから、もう一度タップしてください。');requestFrame(true);return;}
+  if(!selectable||isRunning()||busy||Math.abs(video.currentTime-selectionTime)>.08){setStatus('停止画面の検出を待ってから、もう一度タップしてください。');requestFrame(true);return;}
   worker.postMessage({type:'select',epoch,index,time:selectionTime});
 }
 async function requestFrame(force=false) {
@@ -130,7 +149,7 @@ async function requestFrame(force=false) {
   if(busy){pendingForce ||= force;return;}
   if(!force&&video.currentTime===lastVideoTime)return;
   const now=performance.now(),interval=Math.max(1000/15,processingMs*1.15);
-  if(!force&&now-lastSent<interval)return;
+  if(!force&&!sequenceRunning&&now-lastSent<interval)return;
   busy=true;pendingForce=false;lastSent=now;lastVideoTime=video.currentTime;
   const token=epoch,time=video.currentTime;
   const scale=Math.min(1,768/Math.max(video.videoWidth,video.videoHeight));
@@ -141,7 +160,7 @@ async function requestFrame(force=false) {
     const bitmap=await createImageBitmap(capture);
     if(token!==epoch||!worker){bitmap.close();busy=false;if(pendingForce)requestFrame(true);return;}
     frameTimer=setTimeout(()=>failAi('解析が応答しません。再試行してください。'),15000);
-    worker.postMessage({type:'frame',bitmap,epoch,time,force,fps:Number($('detectFps').value)},[bitmap]);
+    worker.postMessage({type:'frame',bitmap,epoch,time,force,sequence:sequenceRunning,fps:Number($('detectFps').value)},[bitmap]);
   } catch(e){busy=false;failAi(e.message);}
 }
 function tick(now) {
@@ -161,22 +180,36 @@ videoInput.addEventListener('change',async event=>{
 });
 loadAiBtn.addEventListener('click',initDetector);
 resetBtn.addEventListener('click',()=>{video.pause();clearTracking();requestFrame(true);});
-$('detectBtn').addEventListener('click',()=>{video.pause();requestFrame(true);});
+$('detectBtn').addEventListener('click',pausePlayback);
 $('playBtn').addEventListener('click',async()=>{
   if(!video.src)return;
-  if(!video.paused){video.pause();return;}
+  if(isRunning()){pausePlayback();return;}
   if(state==='lost'){setStatus('青い枠から選手を再指定するか、時間を移動してください。');return;}
+  if($('analysisMode').value==='accuracy'&&ready&&state==='tracking'){
+    sequenceRunning=true;selectable=false;renderChoices();updatePlayback();
+    setStatus('精度優先で追跡中。解析を待ちながら進みます（音声なし）。');
+    requestFrame(true);return;
+  }
   try{await video.play();}catch{setStatus('動画を再生できません。MP4（H.264）で試してください。');}
 });
-function seekTo(time){video.pause();video.currentTime=Math.max(0,Math.min(video.duration||0,time));}
+function seekTo(time){stopSequence();sequenceSeek=null;video.pause();video.currentTime=Math.max(0,Math.min(video.duration||0,time));}
 $('seek').addEventListener('input',()=>seekTo(Number($('seek').value)));
 $('backBtn').addEventListener('click',()=>seekTo(video.currentTime-1));
 $('forwardBtn').addEventListener('click',()=>seekTo(video.currentTime+1));
 $('fineBackBtn').addEventListener('click',()=>seekTo(video.currentTime-.1));
 $('fineForwardBtn').addEventListener('click',()=>seekTo(video.currentTime+.1));
 $('speed').addEventListener('change',()=>{video.playbackRate=Number($('speed').value);});
-video.addEventListener('seeking',()=>{clearTracking('移動先を検出しています。選手を選び直してください。');});
-video.addEventListener('seeked',()=>{updatePlayback();requestFrame(true);});
+// Only our exact, outstanding step is an internal seek. User seeks still reset identity.
+video.addEventListener('seeking',()=>{
+  if(sequenceSeek!==null&&Math.abs(video.currentTime-sequenceSeek)<.002)return;
+  clearTracking(ready?'移動先を検出しています。選手を選び直してください。':'時間を移動しました。人物検出にはAIの準備が必要です。');
+});
+video.addEventListener('seeked',()=>{
+  const internal=sequenceSeek!==null&&Math.abs(video.currentTime-sequenceSeek)<.002;
+  sequenceSeek=null;updatePlayback();
+  requestFrame(!internal||!sequenceRunning);
+});
+$('analysisMode').addEventListener('change',()=>{pausePlayback();setStatus('追跡モードを変更しました。再生で開始します。');});
 video.addEventListener('loadedmetadata',()=>{
   $('seek').max=Number.isFinite(video.duration)?video.duration:0;
   document.querySelectorAll('[data-video-control]').forEach(b=>b.disabled=false);updatePlayback();
@@ -190,7 +223,7 @@ video.addEventListener('timeupdate',updateTime);
 // Canvas never sits over playback controls: all controls are outside the stage.
 // During playback a tap pauses first; selecting is only allowed on a fresh still frame.
 overlay.addEventListener('pointerdown',event=>{
-  if(!video.paused){video.pause();return;}
+  if(isRunning()){pausePlayback();return;}
   if(!selectable||busy)return;
   const rect=overlay.getBoundingClientRect(),px=(event.clientX-rect.left)*analysisWidth/rect.width,py=(event.clientY-rect.top)*analysisHeight/rect.height;
   const hits=detections.map((d,i)=>({d,i})).filter(({d:{boundingBox:b}})=>px>=b.originX&&px<=b.originX+b.width&&py>=b.originY&&py<=b.originY+b.height);
@@ -198,7 +231,7 @@ overlay.addEventListener('pointerdown',event=>{
   else if(hits.length>1)setStatus('枠が重なっています。下の番号ボタンで選ぶか、時間を少し移動してください。');
 });
 window.addEventListener('resize',draw);
-document.addEventListener('visibilitychange',()=>{if(document.hidden){video.pause();if(state==='tracking')lose('別の画面に移動しました。戻ったら選手を再指定してください。');}else requestFrame(true);});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){stopSequence();video.pause();if(state==='tracking')lose('別の画面に移動しました。戻ったら選手を再指定してください。');}else requestFrame(true);});
 window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();installPrompt=event;$('installBtn').hidden=false;});
 $('installBtn').addEventListener('click',async()=>{if(installPrompt){await installPrompt.prompt();installPrompt=null;$('installBtn').hidden=true;}});
 if('serviceWorker' in navigator) {
@@ -211,4 +244,4 @@ if('serviceWorker' in navigator) {
   }).catch(()=>{$('pwaInfo').textContent='ホーム画面追加の準備に失敗。オンラインでは利用できます。';});
 }
 
-$('updateBtn').addEventListener('click',()=>{if(waitingWorker){video.pause();reloadForUpdate=true;waitingWorker.postMessage({type:'activateUpdate'});}});
+$('updateBtn').addEventListener('click',()=>{if(waitingWorker){stopSequence();video.pause();reloadForUpdate=true;waitingWorker.postMessage({type:'activateUpdate'});}});

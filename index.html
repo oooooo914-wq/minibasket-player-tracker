@@ -13,7 +13,7 @@
 <body>
   <main class="app">
     <header>
-      <p class="eyebrow">MINIBASKET / TRACKING MVP 0.3</p>
+      <p class="eyebrow">MINIBASKET / TRACKING MVP 0.4</p>
       <h1>あの子の動きを、追いかける。</h1>
       <p>動画を選ぶ → 停止する → 青い枠の選手をタップ → 再生</p>
       <p class="privacy">動画は端末内で解析。アップロードはありません。</p>
@@ -43,10 +43,12 @@
       <div class="controls settings">
         <button id="fineBackBtn" data-video-control disabled type="button">−0.1秒</button>
         <button id="fineForwardBtn" data-video-control disabled type="button">＋0.1秒</button>
+        <label>追跡モード <select id="analysisMode"><option value="accuracy" selected>精度優先（解析を待つ）</option><option value="realtime">連続再生</option></select></label>
         <label>再生速度 <select id="speed"><option value="0.25">0.25倍</option><option value="0.5" selected>0.5倍</option><option value="1">1倍</option></select></label>
         <label>人物検出 <select id="detectFps"><option value="5">5 fps</option><option value="7" selected>7 fps</option><option value="10">10 fps</option></select></label>
       </div>
     </section>
+    <p class="muted">精度優先は、選手を選ぶと解析に合わせてコマ送りします（音声なし）。再生速度は上限です。通常の動画確認には「連続再生」を選べます。</p>
     <p class="muted">枠が小さい場合は番号で選択。再生中の画面タップでも停止できます。</p>
     <div id="playerChoices" class="controls" aria-label="検出した選手の番号"></div>
     <section class="info" aria-label="追跡状態">
@@ -69,7 +71,7 @@
       </details>
     </aside>
     <noscript>このアプリにはJavaScriptが必要です。ChromeでJavaScriptを有効にしてください。</noscript>
-    <footer>MiniBasket Player Tracker · MVP 0.3</footer>
+    <footer>MiniBasket Player Tracker · MVP 0.4</footer>
   </main>
   <script type="module" src="./app.js"></script>
 </body>
