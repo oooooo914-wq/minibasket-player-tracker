@@ -124,7 +124,7 @@ test('diagnostic export bounds history, preserves decision evidence and omits vi
      diagnostic:{code:'position',pending:true,gate:75,candidates:[{box,spatial:1.4,appearance:.1,rejected:['position']}]}});
  }
  await h.get('exportDiagnosticBtn').emit('click');
- assert.equal(h.downloads[0].download,'minibasket-diagnostic-0.5.json');
+ assert.equal(h.downloads[0].download,'minibasket-diagnostic-0.6.json');
  const raw=await h.blobs[0].text(),report=JSON.parse(raw);
  assert.equal(report.records.length,1000);assert.equal(report.counts.position,1100);
  assert.equal(report.settings.holdSeconds,2);assert.deepEqual(report.records.at(-1).candidates[0].rejected,['position']);
@@ -135,6 +135,23 @@ test('diagnostic text can be retrieved without browser download support',async()
  const h=harness();await selected(h);
  await h.get('showDiagnosticBtn').emit('click');
  const output=h.get('diagnosticText');assert.equal(output.hidden,false);
- const report=JSON.parse(output.value);assert.equal(report.appVersion,'0.5');
+ const report=JSON.parse(output.value);assert.equal(report.appVersion,'0.6');
  assert.equal(report.records.at(-1).event,'select');assert.equal(h.downloads.length,0);
+});
+
+test('live tracking uses ordinary playback and respects the requested speed ceiling',async()=>{
+ const h=harness(),{w,v,result}=await selected(h);h.get('speed').value='1';
+ w.reply({...result,state:'tracking',box,ms:300});
+ await h.get('playBtn').emit('click');assert.equal(v.paused,false);
+ assert.ok(v.playbackRate>0&&v.playbackRate<=1);assert.equal(h.step(),false);
+ const before=v.currentTime;w.reply({...result,state:'tracking',box,ms:80});assert.equal(v.currentTime,before);
+ assert.match(h.get('playbackInfo').textContent,/倍/);
+});
+test('the user can skip an offscreen interval without automatically selecting a replacement',async()=>{
+ const h=harness(),{w,v,result}=await selected(h);
+ v.currentTime=10;w.reply({...result,time:10,state:'lost',box,reason:'対象が見つからない'});
+ await h.get('skipLostBtn').emit('click');assert.equal(v.paused,false);
+ w.reply({...result,time:10,state:'tracking',box});
+ assert.equal(h.get('targetInfo').textContent,'画面外・未確認（欠測）');
+ await h.get('reviewLostBtn').emit('click');assert.equal(v.paused,true);assert.equal(v.currentTime,9.5);
 });

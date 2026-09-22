@@ -13,7 +13,7 @@
 <body>
   <main class="app">
     <header>
-      <p class="eyebrow">MINIBASKET / TRACKING MVP 0.5</p>
+      <p class="eyebrow">MINIBASKET / TRACKING MVP 0.6</p>
       <h1>あの子の動きを、追いかける。</h1>
       <p>動画を選ぶ → 停止する → 青い枠の選手をタップ → 再生</p>
       <p class="privacy">動画は端末内で解析。アップロードはありません。</p>
@@ -36,6 +36,8 @@
         <button id="playBtn" data-video-control disabled type="button">▶ 再生</button>
         <button id="backBtn" data-video-control disabled type="button">−1秒</button>
         <button id="forwardBtn" data-video-control disabled type="button">＋1秒</button>
+        <button id="skipLostBtn" type="button" hidden>画面外・不明のまま再生</button>
+        <button id="reviewLostBtn" type="button" hidden>直前のロストへ戻る</button>
         <button id="detectBtn" data-video-control disabled type="button">停止して検出</button>
       </div>
       <label for="seek">再生位置 <output id="timeInfo">0:00 / 0:00</output></label>
@@ -43,19 +45,20 @@
       <div class="controls settings">
         <button id="fineBackBtn" data-video-control disabled type="button">−0.1秒</button>
         <button id="fineForwardBtn" data-video-control disabled type="button">＋0.1秒</button>
-        <label>追跡モード <select id="analysisMode"><option value="accuracy" selected>精度優先（解析を待つ）</option><option value="realtime">連続再生</option></select></label>
-        <label>再生速度 <select id="speed"><option value="0.25">0.25倍</option><option value="0.5" selected>0.5倍</option><option value="1">1倍</option></select></label>
+        <label>追跡モード <select id="analysisMode"><option value="realtime" selected>連続追跡（標準）</option><option value="accuracy">コマ送り解析</option></select></label>
+        <label>再生速度 <select id="speed"><option value="0.25">0.25倍</option><option value="0.5">0.5倍</option><option value="1" selected>1倍</option></select></label>
         <label>予測保留の上限 <select id="holdSeconds"><option value="1">1秒</option><option value="2" selected>2秒</option><option value="3">3秒</option></select></label>
         <label>人物検出 <select id="detectFps"><option value="5">5 fps</option><option value="7" selected>7 fps</option><option value="10">10 fps</option></select></label>
       </div>
     </section>
-    <p class="muted">精度優先は、選手を選ぶと解析に合わせてコマ送りします（音声なし）。再生速度は上限です。通常の動画確認には「連続再生」を選べます。</p>
+    <p class="muted">標準は連続再生しながら追跡します。指定速度を上限に、解析時間に合わせて自動調整します。追いつかない端末では「コマ送り解析」を使えます（音声なし）。</p>
     <p class="muted">「候補1」などの番号は、この停止画面で選ぶための番号です。背番号の読み取りはしていません。選んだ子には固定の「対象」マーカーを表示します。</p>
     <div id="playerChoices" class="controls" aria-label="検出した選手の番号"></div>
     <section class="info" aria-label="追跡状態">
       <div><strong>対象</strong><span id="targetInfo">未選択</span></div>
       <div><strong>AI</strong><span id="aiInfo">未準備</span></div>
       <div><strong>検出</strong><span id="detectInfo">0人</span></div>
+      <div><strong>実際の再生速度</strong><span id="playbackInfo">1.00倍（上限）</span></div>
       <div><strong>実測の検出頻度</strong><span id="fpsInfo">—</span></div>
       <div><strong>カメラ移動</strong><span id="cameraInfo">補正未確定</span></div>
       <div><strong>追跡の確認方法</strong><span id="trackingInfo">未選択</span></div>
@@ -68,7 +71,7 @@
     <p class="muted">止まった原因を確認するための判定記録です。保存したJSONをこのチャットに添付すると調査に使えます。保存できない場合は「診断ログを表示」から長押しでコピーできます。動画・画像・ファイル名は含まず、自動送信しません。</p>
     <textarea id="diagnosticText" aria-label="診断ログ（長押ししてコピーできます）" readonly hidden rows="6" style="box-sizing:border-box;width:100%;font-size:12px"></textarea>
     <aside>
-      <p><span class="dot green"></span>緑：検出確認済み／黄色い点線：予測・未確認　<span class="dot blue"></span>青：検出した人物　<span class="dot yellow"></span>黄：直近8秒の画面上の軌跡</p>
+      <p><span class="dot green"></span>緑：人物検出／水色：画像の特徴点で追跡／黄色い点線：予測・未確認　<span class="dot blue"></span>青：検出した人物　<span class="dot yellow"></span>黄：直近8秒の画面上の軌跡</p>
       <p><strong>走行距離はまだ計測しません。</strong>黄色の線にはカメラの動きも含まれます。検出抜けや密集時は設定時間まで予測保留し、未確認の位置は軌跡に含めません。区別できない場合は停止しますが、同じ服の選手を取り違える可能性は残ります。緑の枠を見ながら確認してください。</p>
       <details><summary>スマホで使うときのヒント</summary>
         <p>Chromeのメニュー →「ホーム画面に追加」から起動できます。初回のAI準備には通信が必要です。動画や検出画像は送信しません。</p>
@@ -77,7 +80,7 @@
       </details>
     </aside>
     <noscript>このアプリにはJavaScriptが必要です。ChromeでJavaScriptを有効にしてください。</noscript>
-    <footer>MiniBasket Player Tracker · MVP 0.5</footer>
+    <footer>MiniBasket Player Tracker · MVP 0.6</footer>
   </main>
   <script type="module" src="./app.js"></script>
 </body>

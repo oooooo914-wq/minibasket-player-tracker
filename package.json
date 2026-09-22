@@ -2,5 +2,5 @@
   "name": "minibasket-player-tracker",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test tests/*.test.js", "check": "node --check app.js && node --check detector-worker.js && node --check tracker.js && node --check sw.js" }
+  "scripts": { "test": "node --test tests/*.test.js", "check": "node --check app.js && node --check detector-worker.js && node --check tracker.js && node --check motion.js && node --check sw.js" }
 }

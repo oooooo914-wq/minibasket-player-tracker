@@ -49,7 +49,7 @@ export function targetRegion(box,width,height,gap=0,margin=0) {
   return {originX:Math.max(0,Math.min(width-rw,c.x-rw/2)),originY:Math.max(0,Math.min(height-rh,c.y-rh/2)),width:rw,height:rh};
 }
 export const HOLD_REASONS={
-  no_detection:'人物検出なし',score:'総合条件を満たさない',position:'予測位置から遠い',appearance:'外見の差が大きい',size:'枠の形が大きく変化',
+  flow:'特徴点で画像追跡',weak_detection:'弱い人物検出を動きで補強',low_confidence:'弱い検出を裏付けられない',no_detection:'人物検出なし',score:'総合条件を満たさない',position:'予測位置から遠い',appearance:'外見の差が大きい',size:'枠の形が大きく変化',
   ambiguity:'似た候補が競合',occlusion:'遮蔽の疑い',recovery:'候補を連続確認中',gap:'確認が途切れた',
   identity_ambiguous:'密集後の本人を区別できない',discontinuity:'動画時間の飛び',confirmed:'人物検出で確認',
 };
@@ -59,12 +59,12 @@ export class PlayerTracker {
     this.state='idle';this.box=null;this.anchor=null;this.recent=null;this.reason='';
     this.time=null;this.lastDetection=null;this.bridge=false;this.note='未選択';this.code='idle';
     this.localReliable=false;this.ambiguitySince=null;this.recovery=null;this.identityUnresolved=false;this.gate=0;this.ranking=[];
-    this.cameraSum={x:0,y:0};this.lastAccepted=null;this.lastDt=0;
+    this.cameraSum={x:0,y:0};this.lastAccepted=null;this.lastDt=0;this.lastEvidence=null;this.localContinuity=false;this.visual=false;
   }
   select(d,time){
     this.reset();this.box={...d.boundingBox};this.anchor=[...d.appearance];this.recent=[...d.appearance];
     const c=centerOf(this.box);this.kx=new KalmanAxis(c.x);this.ky=new KalmanAxis(c.y);
-    this.state='tracking';this.time=time;this.lastDetection=time;this.lastAccepted={...c,time};
+    this.state='tracking';this.time=time;this.lastDetection=time;this.lastEvidence=time;this.lastAccepted={...c,time};
     this.code='confirmed';this.note=HOLD_REASONS.confirmed;
   }
   lose(reason,code=this.code){
@@ -79,27 +79,47 @@ export class PlayerTracker {
     const camera=motion?.camera,old=centerOf(this.box);
     const dx=camera?.reliable?camera.dx:0,dy=camera?.reliable?camera.dy:0;
     this.cameraSum.x+=dx;this.cameraSum.y+=dy;
+    const scale=camera?.reliable?(camera.scale||1):1;
+    this.box.width*=scale;this.box.height*=scale;
+    if(camera?.reliable&&Number.isFinite(camera.a)){const vx=this.kx.v,vy=this.ky.v;this.kx.v=camera.a*vx-camera.b*vy;this.ky.v=camera.b*vx+camera.a*vy;}
     this.kx.predict(dt,dx);this.ky.predict(dt,dy);
     // Validate the proposed flow patch BEFORE applying it. A crowd's flow must
     // not move our box onto a rival and then contaminate the appearance anchor.
-    this.localReliable=!!motion?.local?.reliable&&!this.identityUnresolved&&!['ambiguity','occlusion'].includes(this.code)&&
-      appearanceDistance(this.anchor,motion.local.appearance)<.5;
-    if(this.localReliable){this.kx.correct(old.x+motion.local.dx);this.ky.correct(old.y+motion.local.dy);}
+    this.localContinuity=!!motion?.local?.continuity&&motion.local.points>=6;
+    this.localReliable=!!motion?.local?.reliable&&
+      (this.localContinuity||(!this.identityUnresolved&&!['ambiguity','occlusion'].includes(this.code)))&&
+      appearanceDistance(this.anchor,motion.local.appearance)<(this.localContinuity ? .65 : .5);
+    this.localContinuity&&=this.localReliable;
+    if(this.localReliable){
+      const x=old.x+motion.local.dx,y=old.y+motion.local.dy;
+      this.kx.correct(x);this.ky.correct(y);
+      // Observed feature motion is the current frame position, not a delayed
+      // heavily smoothed box. The filter still estimates velocity/uncertainty.
+      this.kx.x=x;this.ky.x=y;
+    }
     this.box.originX=this.kx.x-this.box.width/2;this.box.originY=this.ky.x-this.box.height/2;this.time=time;
   }
   hold(time,code='gap'){
     if(this.state!=='tracking')return null;
     this.bridge=true;this.code=this.identityUnresolved?'identity_ambiguous':code;
-    const gap=Math.max(0,time-this.lastDetection),label=HOLD_REASONS[this.code]||this.code;
+    this.visual=false;
+    const gap=Math.max(0,time-this.lastEvidence),label=HOLD_REASONS[this.code]||this.code;
     if(gap>this.maxGap)return this.lose(`${this.maxGap}秒確認できませんでした（${label}）。再指定してください。`);
     this.note=`予測保留 ${gap.toFixed(1)} / ${this.maxGap}秒：${label}`;return null;
   }
+  followFeatures(time){
+    if(!this.localContinuity||this.identityUnresolved||time-this.lastDetection>6)return false;
+    this.lastEvidence=time;this.bridge=false;this.visual=true;this.code='flow';this.note=HOLD_REASONS.flow;return true;
+  }
   finishFrame(time){
-    if(this.state==='tracking'&&(this.bridge||time-this.lastDetection>.3))this.hold(time,this.code==='confirmed'?'gap':this.code);
+    if(this.state==='tracking'&&(this.bridge||time-this.lastDetection>.3)){
+      if(!['ambiguity','occlusion','identity_ambiguous','recovery'].includes(this.code)&&this.followFeatures(time))return;
+      this.hold(time,this.code==='confirmed'?'gap':this.code);
+    }
   }
   match(candidates,time){
     if(this.state!=='tracking')return null;
-    if(time-this.lastDetection>this.maxGap)return this.hold(time,this.code);
+    if(time-this.lastEvidence>this.maxGap)return this.hold(time,this.code);
     const predicted=centerOf(this.box),gap=Math.max(0,time-this.lastDetection),speed=Math.hypot(this.kx.v,this.ky.v);
     // Velocity + uncertainty determine the search gate, rather than one fixed
     // fraction of a small player's height. Shape relies more on height than arms.
@@ -110,16 +130,22 @@ export class PlayerTracker {
       const size=.7*Math.abs(Math.log(b.height/this.box.height))+.3*Math.abs(Math.log(b.width/this.box.width));
       const appearance=.7*appearanceDistance(this.anchor,d.appearance)+.3*appearanceDistance(this.recent,d.appearance);
       const rejected=[];if(spatial>1)rejected.push('position');if(size>1.1)rejected.push('size');if(appearance>.6)rejected.push('appearance');
-      return {d,index,spatial,size,appearance,rejected,score:.45*spatial+.15*size+.75*appearance+.08*(1-iou(this.box,b))};
+      const weak=(d.score??1)<.35;
+      if(weak&&(!((this.localContinuity&&d.flowSupport?.unique>=6)||(spatial<.4&&iou(this.box,b)>.35&&time-this.lastEvidence<.4))||appearance>.35||size>.5))rejected.push('low_confidence');
+      return {d,index,spatial,size,appearance,rejected,weak,score:.45*spatial+.15*size+.75*appearance+.08*(1-iou(this.box,b))};
     }).sort((a,b)=>a.score-b.score);
-    this.ranking=scored.slice(0,3).map(({d,index,spatial,size,appearance,rejected,score})=>({index,box:{...d.boundingBox},confidence:d.score??null,spatial,size,appearance,rejected,score}));
-    const ranked=scored.filter(r=>!r.rejected.length),best=ranked[0],second=ranked[1];
+    this.ranking=scored.slice(0,3).map(({d,index,spatial,size,appearance,rejected,score})=>({index,box:{...d.boundingBox},confidence:d.score??null,flowSupport:d.flowSupport??null,spatial,size,appearance,rejected,score}));
+    const ranked=scored.filter(r=>!r.rejected.length);
+    const supported=ranked.filter(r=>this.localContinuity&&r.d.flowSupport?.continuity&&r.d.flowSupport.unique>=6&&r.d.flowSupport.unique/Math.max(1,r.d.flowSupport.total)>=.65&&r.spatial<.8&&r.appearance<.6);
+    const flowWinner=supported.length===1?supported[0]:null,best=flowWinner||ranked[0],second=ranked.find(r=>r!==best);
+    if(flowWinner)this.identityUnresolved=false;
     if(!best||best.score>.9){
       this.recovery=null;
+      if(this.followFeatures(time))return null;
       return this.hold(time,!candidates.length?'no_detection':scored[0]?.rejected[0]||'score');
     }
-    const similarOverlap=candidates.some(d=>d!==best.d&&iou(d.boundingBox,best.d.boundingBox)>.28&&appearanceDistance(this.anchor,d.appearance)<.55);
-    if((second&&second.score-best.score<.14)||similarOverlap){
+    const similarOverlap=candidates.some(d=>d!==best.d&&(d.score??1)>=.35&&iou(d.boundingBox,best.d.boundingBox)>.28&&appearanceDistance(this.anchor,d.appearance)<.55);
+    if(!flowWinner&&((second&&second.score-best.score<.14)||similarOverlap)){
       // Once identical-looking candidates overlap persistently, a lone later detection
       // is not sufficient proof of identity. Keep the prediction visible, but
       // require the user to resolve that identity conflict rather than swapping.
@@ -128,7 +154,7 @@ export class PlayerTracker {
       this.recovery=null;return this.hold(time,'ambiguity');
     }
     this.ambiguitySince=null;
-    if(candidates.some(d=>d!==best.d&&iou(d.boundingBox,best.d.boundingBox)>.65)){
+    if(!flowWinner&&candidates.some(d=>d!==best.d&&(d.score??1)>=.35&&iou(d.boundingBox,best.d.boundingBox)>.65)){
       this.recovery=null;return this.hold(time,'occlusion');
     }
     if(this.identityUnresolved)return this.hold(time,'identity_ambiguous');
@@ -137,7 +163,7 @@ export class PlayerTracker {
       const consistent=this.recovery&&dt>0&&dt<.4&&Math.hypot(c.x-this.recovery.x,c.y-this.recovery.y)<Math.max(12,this.box.height*.6)+speed*dt;
       // Recovery needs three distinct timestamps, a clear margin and strong
       // appearance. Neither duplicate paused frames nor coasting count as proof.
-      const strong=best.appearance<.42&&best.spatial<.8&&(!second||second.score-best.score>.22);
+      const strong=best.appearance<.42&&best.spatial<.8&&(flowWinner||!second||second.score-best.score>.22);
       if(!strong){this.recovery=null;return this.hold(time,'recovery');}
       if(!this.recovery||dt>0)this.recovery={...c,time,count:consistent?this.recovery.count+1:1,start:consistent?this.recovery.start:time};
       if(this.recovery.count<3||time-this.recovery.start<.18)return this.hold(time,'recovery');
@@ -150,13 +176,13 @@ export class PlayerTracker {
       this.kx.v=.45*this.kx.v+.55*vx;this.ky.v=.45*this.ky.v+.55*vy;
     }
     this.kx.correct(c.x);this.ky.correct(c.y);this.kx.x=c.x;this.ky.x=c.y;this.box={...best.d.boundingBox};
-    if(best.score<.3)this.recent=this.recent.map((v,i)=>.96*v+.04*best.d.appearance[i]);
-    this.lastDetection=time;this.lastAccepted={...c,time};this.cameraSum={x:0,y:0};
-    this.bridge=false;this.recovery=null;this.code='confirmed';this.note=HOLD_REASONS.confirmed;return best.d;
+    if(best.score<.3&&!best.weak)this.recent=this.recent.map((v,i)=>.96*v+.04*best.d.appearance[i]);
+    this.lastDetection=time;this.lastEvidence=time;this.lastAccepted={...c,time};this.cameraSum={x:0,y:0};
+    this.bridge=false;this.visual=!!best.weak;this.recovery=null;this.code=best.weak?'weak_detection':'confirmed';this.note=HOLD_REASONS[this.code];return best.d;
   }
   diagnostics(){
     return {code:this.code,label:HOLD_REASONS[this.code]||this.code,pending:this.bridge,
-      gap:this.lastDetection===null?0:Math.max(0,this.time-this.lastDetection),maxGap:this.maxGap,
+      gap:this.lastDetection===null?0:Math.max(0,this.time-this.lastDetection),maxGap:this.maxGap,evidenceGap:this.lastEvidence===null?0:Math.max(0,this.time-this.lastEvidence),visual:this.visual,featureChain:this.localContinuity,
       box:this.box?{...this.box}:null,speed:this.kx?Math.hypot(this.kx.v,this.ky.v):0,gate:this.gate,flowUsed:this.localReliable,
       identityUnresolved:this.identityUnresolved,recoveryCount:this.recovery?.count||0,candidates:this.ranking};
   }

@@ -137,3 +137,33 @@ test('target crop magnifies small players, grows during gaps and stays in the fr
    assert.ok(r.originX>=0&&r.originY>=0&&r.originX+r.width<=768&&r.originY+r.height<=432);
  }
 });
+
+const featureMotion={local:{dx:1,dy:0,reliable:true,continuity:true,points:12,appearance:red}};
+test('an unbroken verified feature chain carries short detector misses without a recovery prompt',()=>{
+ const t=new PlayerTracker();t.select(person(100),0);
+ for(let i=1;i<=20;i++)step(t,i*.2,[],featureMotion);
+ assert.equal(t.state,'tracking');assert.equal(t.visual,true);assert.equal(t.bridge,false);assert.equal(t.code,'flow');
+ assert.ok(t.box.originX>=120);assert.deepEqual(t.anchor,red);
+});
+test('feature-only tracking has a deadline and a broken chain cannot prolong it',()=>{
+ const t=new PlayerTracker();t.select(person(100),0);
+ for(let i=1;i<=41;i++)step(t,i*.2,[],featureMotion);
+ assert.equal(t.state,'lost');assert.equal(t.match([person(140)],8.3),null);
+});
+test('continuous unique feature ownership can distinguish overlapping identical uniforms',()=>{
+ const t=new PlayerTracker();t.select(person(100),0);
+ const correct=person(102),other=person(108);
+ correct.flowSupport={unique:10,total:12,continuity:true};other.flowSupport={unique:0,total:12,continuity:true};
+ assert.equal(step(t,.1,[other,correct],featureMotion),correct);assert.equal(t.bridge,false);
+});
+test('a stale point vote without a continuous chain cannot identify a player',()=>{
+ const t=new PlayerTracker();t.select(person(100),0);
+ const correct=person(102),other=person(108);correct.flowSupport={unique:12,total:12,continuity:true};
+ assert.equal(step(t,.1,[other,correct]),null);assert.equal(t.bridge,true);
+});
+test('low confidence detections only sustain a geometrically and visually consistent track',()=>{
+ const t=new PlayerTracker();t.select(person(100),0);
+ const weak={...person(102),score:.23};assert.equal(step(t,.1,[weak]),weak);assert.equal(t.code,'weak_detection');
+ const distant={...person(132),score:.23};assert.equal(step(t,.2,[distant]),null);
+ assert.ok(t.ranking[0].rejected.includes('low_confidence'));
+});
