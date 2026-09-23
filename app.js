@@ -289,11 +289,16 @@ window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();ins
 $('installBtn').addEventListener('click',async()=>{if(installPrompt){await installPrompt.prompt();installPrompt=null;$('installBtn').hidden=true;}});
 if('serviceWorker' in navigator) {
   navigator.serviceWorker.register(new URL('./sw.js',import.meta.url),{scope:'./',updateViaCache:'none'}).then(reg=>{
-    $('pwaInfo').textContent=reg.active?'ホーム画面追加対応':'オフライン用画面を準備中';
-    const update=()=>{waitingWorker=reg.waiting;$('updateBtn').hidden=false;$('pwaInfo').textContent='更新あり：更新ボタンで反映';};
-    if(reg.waiting)update();
-    reg.addEventListener('updatefound',()=>reg.installing?.addEventListener('statechange',()=>{if(reg.waiting)update();}));
-    navigator.serviceWorker.addEventListener('controllerchange',()=>{if(reloadForUpdate){window.location.reload();return;}$('pwaInfo').textContent='ホーム画面追加対応';});
+    const update=()=>{
+      // First installation activates by itself. Offer updates only while an older
+      // worker controls this page and the replacement is still waiting.
+      waitingWorker=navigator.serviceWorker.controller&&reg.waiting?.state==='installed'?reg.waiting:null;
+      $('updateBtn').hidden=!waitingWorker;
+      $('pwaInfo').textContent=waitingWorker?'更新あり：更新ボタンで反映':reg.active?'ホーム画面追加対応':'オフライン用画面を準備中';
+    };
+    const watch=()=>reg.installing?.addEventListener('statechange',update);
+    update();watch();reg.addEventListener('updatefound',watch);
+    navigator.serviceWorker.addEventListener('controllerchange',()=>{if(reloadForUpdate){window.location.reload();return;}update();});
   }).catch(()=>{$('pwaInfo').textContent='ホーム画面追加の準備に失敗。オンラインでは利用できます。';});
 }
 

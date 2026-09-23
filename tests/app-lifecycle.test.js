@@ -5,8 +5,8 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
 const source=fs.readFileSync(new URL('../app.js',import.meta.url),'utf8').replaceAll('import.meta.url',"'https://example.test/minibasket-player-tracker/app.js'");
-function harness() {
-  const ctx2d=new Proxy({},{get:()=>()=>{}}),nodes=new Map(),timers=new Map();let timer=0,worker,wall=1000;const downloads=[],blobs=[];
+function harness(serviceWorker) {
+  const ctx2d=new Proxy({},{get:()=>()=>{}}),nodes=new Map(),timers=new Map();let timer=0,worker,wall=1000,reloads=0;const downloads=[],blobs=[];
   class Element {
     constructor(id='') {this.id=id;this.listeners={};this.children=[];this.value='';this.width=640;this.height=360;this.style={};this.classList={toggle(){}};this.textContent='';this.src='';this.paused=true;this.readyState=0;this.currentTime=0;this.duration=1800;this.videoWidth=1280;this.videoHeight=720;this.seeking=false;}
     addEventListener(e,f){(this.listeners[e]??=[]).push(f);}
@@ -21,11 +21,11 @@ function harness() {
   get('speed').value='.5';get('detectFps').value='7';get('analysisMode').value='realtime';get('holdSeconds').value='2';
   const document=Object.assign(new Element('document'),{body:new Element('body'),hidden:false,getElementById:get,createElement:tag=>new Element(tag),querySelectorAll:()=>[]});
   class FakeWorker {constructor(){worker=this;this.messages=[];}postMessage(m){this.messages.push(m);}terminate(){}reply(m){this.onmessage({data:m});}}
-  const sandbox={document,window:{devicePixelRatio:1,Worker:FakeWorker,OffscreenCanvas:class{},createImageBitmap:async()=>({close(){}}),addEventListener(){}},
-    navigator:{},Blob,URL:class extends URL{static createObjectURL(b){blobs.push(b);return 'blob:test';}static revokeObjectURL(){}},Worker:FakeWorker,performance:{now:()=>wall},createImageBitmap:async()=>({close(){}}),
+  const sandbox={document,window:{devicePixelRatio:1,Worker:FakeWorker,OffscreenCanvas:class{},createImageBitmap:async()=>({close(){}}),addEventListener(){},location:{reload(){reloads++;}}},
+    navigator:serviceWorker?{serviceWorker}:{},Blob,URL:class extends URL{static createObjectURL(b){blobs.push(b);return 'blob:test';}static revokeObjectURL(){}},Worker:FakeWorker,performance:{now:()=>wall},createImageBitmap:async()=>({close(){}}),
     setTimeout:(fn,delay)=>{timers.set(++timer,{fn,delay});return timer;},clearTimeout:id=>timers.delete(id),requestAnimationFrame:()=>1,cancelAnimationFrame(){}};
   vm.runInNewContext(source,sandbox);
-  return {get,document,downloads,blobs,elapse(ms){wall+=ms;},step(){const entry=[...timers.entries()].find(([,t])=>t.delay<1000);if(!entry)return false;timers.delete(entry[0]);entry[1].fn();return true;},async ready(){const p=get('loadAiBtn').emit('click');worker.reply({type:'ready'});await p;return worker;}};
+  return {get,document,downloads,blobs,get reloads(){return reloads;},elapse(ms){wall+=ms;},step(){const entry=[...timers.entries()].find(([,t])=>t.delay<1000);if(!entry)return false;timers.delete(entry[0]);entry[1].fn();return true;},async ready(){const p=get('loadAiBtn').emit('click');worker.reply({type:'ready'});await p;return worker;}};
 }
 const box={originX:100,originY:50,width:30,height:70};
 const flush=async()=>{for(let i=0;i<6;i++)await Promise.resolve();};
@@ -154,4 +154,34 @@ test('the user can skip an offscreen interval without automatically selecting a 
  w.reply({...result,time:10,state:'tracking',box});
  assert.equal(h.get('targetInfo').textContent,'画面外・未確認（欠測）');
  await h.get('reviewLostBtn').emit('click');assert.equal(v.paused,true);assert.equal(v.currentTime,9.5);
+});
+
+function serviceWorkerHarness(hasController=false){
+ const emitter=()=>({listeners:{},addEventListener(name,fn){(this.listeners[name]??=[]).push(fn);},emit(name){for(const fn of this.listeners[name]||[])fn();}});
+ const old={state:'activated'},messages=[];
+ const replacement=Object.assign(emitter(),{state:'installing',postMessage:m=>messages.push(m)});
+ const reg=Object.assign(emitter(),{active:hasController?old:null,installing:replacement,waiting:null});
+ const service=Object.assign(emitter(),{controller:hasController?old:null,register:async()=>reg});
+ return {service,reg,replacement,messages,
+   install(){replacement.state='installed';reg.waiting=replacement;reg.installing=null;replacement.emit('statechange');},
+   activate(){replacement.state='activated';reg.waiting=null;reg.active=replacement;service.controller=replacement;replacement.emit('statechange');service.emit('controllerchange');}};
+}
+test('first PWA installation does not leave an unusable update button',async()=>{
+ const s=serviceWorkerHarness(),h=harness(s.service);await flush();
+ s.install();assert.equal(h.get('updateBtn').hidden,true);
+ s.activate();assert.equal(h.get('updateBtn').hidden,true);assert.equal(h.reloads,0);
+ assert.equal(h.get('pwaInfo').textContent,'ホーム画面追加対応');
+});
+test('a waiting PWA update reloads only after the user selects it and activation finishes',async()=>{
+ const s=serviceWorkerHarness(true),h=harness(s.service);await flush();
+ s.install();assert.equal(h.get('updateBtn').hidden,false);assert.equal(h.reloads,0);
+ h.get('video').paused=false;await h.get('updateBtn').emit('click');
+ assert.equal(h.get('video').paused,true);assert.equal(s.messages[0].type,'activateUpdate');assert.equal(h.reloads,0);
+ s.activate();assert.equal(h.reloads,1);
+});
+test('activation by another tab clears the stale update button without forcing a reload',async()=>{
+ const s=serviceWorkerHarness(true),h=harness(s.service);await flush();
+ s.install();assert.equal(h.get('updateBtn').hidden,false);
+ s.activate();assert.equal(h.get('updateBtn').hidden,true);assert.equal(h.reloads,0);
+ assert.equal(h.get('pwaInfo').textContent,'ホーム画面追加対応');
 });
